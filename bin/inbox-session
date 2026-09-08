@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# The container's inbox session: one named Claude Code session, reachable from the phone
+# via Remote Control, that the relay feeds.  Same shape as woolly-workplace/bin/remote-control
+# (connectivity gate + Restart=always self-heal), run inside a tmux session so that
+#   - the --dangerously-load-development-channels consent dialog (shown at EVERY start,
+#     not persisted — verified 2026-09-08) can be answered automatically, and
+#   - you can `tmux attach -t relay-inbox` locally to watch or type.
+# The MCP config for the channel shim is generated here from relay.toml; nothing needs
+# registering in ~/.claude.json.
+set -uo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cfg="${RELAY_CONFIG:-$here/relay.toml}"
+[ -f "$cfg" ] || { echo "inbox-session: no $cfg" >&2; exit 1; }
+
+get() { python3 -c 'import tomllib,sys; print(tomllib.load(open(sys.argv[1],"rb")).get(sys.argv[2], sys.argv[3]))' "$cfg" "$1" "${2:-}"; }
+NAME="$(get session_name "relay inbox")"
+CWD="$(get session_cwd "$HOME")"
+MODE="$(get permission_mode auto)"
+STREAM="$(get stream relay)"
+USE_CHANNEL="$(get channel_flags "")"          # non-empty → route 2 (channel shim)
+TMUX_NAME="${RELAY_TMUX_NAME:-relay-inbox}"
+PROBE_URL="${RELAY_PROBE_URL:-https://api.anthropic.com/}"
+CLAUDE_BIN="${RELAY_CLAUDE_BIN:-$(command -v claude || echo /run/current-system/sw/bin/claude)}"
+NODE_BIN="$(command -v node || echo "$HOME/.local/bin/node")"
+
+if ! curl -sS -o /dev/null --max-time 10 "$PROBE_URL"; then
+  echo "inbox-session: no connectivity to $PROBE_URL; exiting for systemd retry" >&2
+  exit 1
+fi
+
+mkdir -p "$here/state"
+cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE"
+if [ -n "$USE_CHANNEL" ]; then
+  mcp="$here/state/mcp-config.json"
+  python3 - "$mcp" "$NODE_BIN" "$here" "$STREAM" <<'EOF'
+import json, sys
+out, node, here, stream = sys.argv[1:5]
+json.dump({"mcpServers": {"relay": {"command": node, "args": [f"{here}/relay_channel.mjs"],
+           "env": {"RELAY_SPOOL": f"{here}/spool", "RELAY_STREAM": stream}}}}, open(out, "w"), indent=1)
+EOF
+  cmd="$cmd --mcp-config \"$mcp\" $USE_CHANNEL"
+fi
+
+tmux kill-session -t "$TMUX_NAME" 2>/dev/null
+echo "inbox-session: starting '$NAME' in $CWD ($MODE)${USE_CHANNEL:+ with channel shim} [tmux:$TMUX_NAME]" >&2
+tmux new-session -d -s "$TMUX_NAME" -x 200 -y 50 -c "$CWD" "$cmd" || exit 1
+
+# Answer the development-channels consent ("1. I am using this for local development").
+if [ -n "$USE_CHANNEL" ]; then
+  for _ in $(seq 1 40); do
+    if tmux capture-pane -p -t "$TMUX_NAME" 2>/dev/null | grep -q "Loading development channels"; then
+      tmux send-keys -t "$TMUX_NAME" Enter
+      echo "inbox-session: development-channels consent answered" >&2
+      break
+    fi
+    sleep 1
+  done
+fi
+
+# Stay in the foreground for systemd; exit (→ Restart=always) when the session ends.
+trap 'tmux kill-session -t "$TMUX_NAME" 2>/dev/null; exit 0' INT TERM
+while tmux has-session -t "$TMUX_NAME" 2>/dev/null; do sleep 15; done
+echo "inbox-session: tmux session '$TMUX_NAME' ended" >&2
+exit 1

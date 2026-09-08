@@ -1,0 +1,22 @@
+# nexus-relay — one file per container. Copy to relay.toml and fill in.
+stream = "Woolly"                      # name shown in replies / channel meta
+calendar_id = "xxxx@group.calendar.google.com"   # from: relay_poller.py --list-calendars
+timezone = "Australia/Melbourne"
+
+# inbox session (bin/inbox-session)
+session_name = "Woolly inbox"          # the Remote Control name you tap on the phone
+session_cwd = "/home/woollyworkplace/woolly-workplace"
+permission_mode = "auto"               # auto | acceptEdits | default …
+# route 2 (channels) flags; leave empty to run the session without the channel shim (route 3)
+channel_flags = "--dangerously-load-development-channels server:relay"
+
+poll_interval_seconds = 60
+backfill_hours = 0                     # first run: how far back to sweep for requests (0 = from now)
+reply_buzz = true                      # slide replied events to "now" + 1-min popup so the phone buzzes
+reply_buzz_lead_minutes = 2
+
+# paths (relative to this file)
+spool_dir = "spool"
+state_file = "state/poller_state.json"
+token_file = "state/token.json"
+client_secret_file = "state/client_secret.json"

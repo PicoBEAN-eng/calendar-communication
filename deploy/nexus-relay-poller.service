@@ -1,0 +1,12 @@
+# ~/.config/systemd/user/nexus-relay-poller.service — one poll per timer tick.
+# systemctl --user enable --now nexus-relay-poller.timer
+[Unit]
+Description=nexus-relay: Google Calendar poll (claim requests, push replies)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/nexus-relay
+ExecStart=%h/woolly-workplace/.venv/bin/python %h/nexus-relay/relay_poller.py --once
+# Route 3 only (no channel shim): also hand inbox files to the session via claude -p
+#ExecStartPost=%h/woolly-workplace/.venv/bin/python %h/nexus-relay/relay_send_p.py
+Environment=PATH=%h/.local/bin:/run/current-system/sw/bin:/usr/bin:/bin

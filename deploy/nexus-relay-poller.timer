@@ -1,0 +1,11 @@
+[Unit]
+Description=nexus-relay: poll the stream calendar every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
