@@ -175,7 +175,12 @@ def pull_changes(svc, cfg: dict, state: dict) -> list[dict]:
     if state.get("sync_token"):
         params["syncToken"] = state["sync_token"]
     else:
-        since = datetime.now(timezone.utc) - timedelta(hours=float(cfg["backfill_hours"]))
+        # Bootstrap window: from the last successful poll (minus a day of slack, so a
+        # past-dated event created since then still lists), else backfill_hours.
+        if state.get("last_poll_at"):
+            since = datetime.fromisoformat(state["last_poll_at"]) - timedelta(days=1)
+        else:
+            since = datetime.now(timezone.utc) - timedelta(hours=float(cfg["backfill_hours"]))
         params["timeMin"] = since.isoformat()
         log(f"no sync token — bootstrapping from {since.isoformat(timespec='minutes')}")
     while True:
@@ -192,6 +197,7 @@ def pull_changes(svc, cfg: dict, state: dict) -> list[dict]:
         page = resp.get("nextPageToken")
         if not page:
             state["sync_token"] = resp.get("nextSyncToken")
+            state["last_poll_at"] = datetime.now(timezone.utc).isoformat()
             break
     return events
 
