@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nexus-comms fallback sender (route 3): deliver spool/inbox requests to the named inbox
+"""calendar-communication fallback sender (route 3): deliver spool/inbox requests to the named inbox
 session with a one-shot `claude -p` that calls the documented SendMessage tool.
 
 Costs one small model call per request (~10 s); needs no preview flags.  The receiving

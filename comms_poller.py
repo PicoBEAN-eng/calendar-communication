@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nexus-comms poller — the Google Calendar side of the comms.
+"""calendar-communication poller — the Google Calendar side of the comms.
 
 One stream calendar (a secondary calendar on the Gmail account) is the message bus:
 

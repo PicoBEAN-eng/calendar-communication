@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// nexus-comms channel shim — the Claude Code side of the comms (route 2: channels).
+// calendar-communication channel shim — the Claude Code side of the comms (route 2: channels).
 //
 // An MCP "channel" server: Claude Code starts it with the session and it pushes each
 // spool/inbox/<event_id>.json request into the session as a <channel> event.  It also
@@ -7,8 +7,8 @@
 // poller to push back to the calendar.  No Google code here — the spool is the contract.
 //
 // Run by Claude Code (registered as an MCP server named "comms"), e.g. in ~/.claude.json:
-//   "mcpServers": { "comms": { "command": "node", "args": ["/home/<user>/nexus-comms/comms_channel.mjs"],
-//                              "env": { "COMMS_SPOOL": "/home/<user>/nexus-comms/spool" } } }
+//   "mcpServers": { "comms": { "command": "node", "args": ["/home/<user>/calendar-communication/comms_channel.mjs"],
+//                              "env": { "COMMS_SPOOL": "/home/<user>/calendar-communication/spool" } } }
 // then start the session with:  claude --dangerously-load-development-channels server:comms
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

@@ -1,12 +1,12 @@
-# ~/.config/systemd/user/nexus-comms-poller.service — one poll per timer tick.
-# systemctl --user enable --now nexus-comms-poller.timer
+# ~/.config/systemd/user/calendar-communication-poller.service — one poll per timer tick.
+# systemctl --user enable --now calendar-communication-poller.timer
 [Unit]
-Description=nexus-comms: Google Calendar poll (claim requests, push replies)
+Description=calendar-communication: Google Calendar poll (claim requests, push replies)
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/nexus-comms
-ExecStart=%h/woolly-workplace/.venv/bin/python %h/nexus-comms/comms_poller.py --once
+WorkingDirectory=%h/calendar-communication
+ExecStart=%h/woolly-workplace/.venv/bin/python %h/calendar-communication/comms_poller.py --once
 # Route 3 only (no channel shim): also hand inbox files to the session via claude -p
-#ExecStartPost=%h/woolly-workplace/.venv/bin/python %h/nexus-comms/comms_send_p.py
+#ExecStartPost=%h/woolly-workplace/.venv/bin/python %h/calendar-communication/comms_send_p.py
 Environment=PATH=%h/.local/bin:/run/current-system/sw/bin:/usr/bin:/bin

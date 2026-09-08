@@ -1,4 +1,4 @@
-# nexus-comms — one file per container. Copy to comms.toml and fill in.
+# calendar-communication — one file per container. Copy to comms.toml and fill in.
 stream = "Woolly"                      # name shown in replies / channel meta
 calendar_id = "xxxx@group.calendar.google.com"   # from: comms_poller.py --list-calendars
 timezone = "Australia/Melbourne"

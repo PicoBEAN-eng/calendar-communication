@@ -1,5 +1,5 @@
 [Unit]
-Description=nexus-comms: poll the stream calendar every minute
+Description=calendar-communication: poll the stream calendar every minute
 
 [Timer]
 OnBootSec=2min

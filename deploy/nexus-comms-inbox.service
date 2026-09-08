@@ -1,14 +1,14 @@
-# ~/.config/systemd/user/nexus-comms-inbox.service — the named inbox session.
+# ~/.config/systemd/user/calendar-communication-inbox.service — the named inbox session.
 # Prereqs (once, interactively, as this user): claude login; trust session_cwd; accept the
 # Remote Control consent (claude remote-control → y).  The session runs inside tmux
 # session "comms-inbox" (attach with: tmux attach -t comms-inbox).
 [Unit]
-Description=nexus-comms: inbox Claude Code session (Remote Control + channel shim)
+Description=calendar-communication: inbox Claude Code session (Remote Control + channel shim)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=%h/nexus-comms/bin/inbox-session
+ExecStart=%h/calendar-communication/bin/inbox-session
 ExecStop=/bin/sh -c 'tmux kill-session -t comms-inbox 2>/dev/null || true'
 Restart=always
 RestartSec=30

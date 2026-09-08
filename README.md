@@ -1,4 +1,4 @@
-# nexus-comms
+# calendar-communication
 
 Phone (Claude app, voice) → Google Calendar → this container's **inbox session** (a named
 Claude Code session you can also open from the phone via Remote Control) → reply back onto
@@ -66,7 +66,7 @@ once pushed into the session, outbox files to `outbox/done/` once on the calenda
    **Route 3** instead: set `channel_flags = ""` in `comms.toml` and uncomment the
    `ExecStartPost` line in the poller service.
 5. **Units**: `cp deploy/* ~/.config/systemd/user/ && systemctl --user daemon-reload &&
-   systemctl --user enable --now nexus-comms-poller.timer nexus-comms-inbox.service`.
+   systemctl --user enable --now calendar-communication-poller.timer calendar-communication-inbox.service`.
 6. **Phone**: in the inbox session run `/config` and turn on *Push when Claude decides* and
    *Push when actions required* (permission prompts then reach the phone). In the Claude
    app, Settings → Profile → *Instructions for Claude*, paste something like:
