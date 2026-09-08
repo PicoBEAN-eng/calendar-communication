@@ -5,9 +5,22 @@ One stream calendar (a secondary calendar on the Gmail account) is the message b
 
   request   : an event the phone created (no state yet, no title prefix)
   claimed   : we saw it → "⏳ " prefix, yellow, inbox file written for the session
-  done      : session replied → "✓ " prefix, green, brief appended to the description,
-              event moved to "now" with a 1-minute popup reminder so the phone buzzes
+  done      : session replied → "✓ " prefix, green, the description IS the reply (whiteboard
+              slot: one turn at a time), event moved to "now" with a 1-minute popup so the
+              phone buzzes
   question  : session needs input → "? " prefix, red, same treatment
+  progress  : session heartbeat → "⏳ <text> · " in the TITLE only; the description (the
+              user's question) is never touched
+  new turn  : an answered event whose description no longer equals the text we last wrote
+              (and is not empty) is the next turn of the same thread — re-claimed, turn+1
+
+Whiteboard model (2026-09-08): the event holds only the current turn; the durable memory is
+the per-thread transcript file spool/threads/<root_event_id>.md (both sides appended every
+turn), whose path rides in the inbox file so the session reads it before answering.
+Replies are written with an etag conditional patch: on a 412 conflict the event is re-read
+and, if the phone wrote a newer turn, that turn is claimed with the undelivered reply attached.
+A tier word in the title (cheap/heavy/low/high/model names; default Query→low, Design→high)
+is stamped into the inbox file for the channel shim's sequencer.
 
 State lives in the event's private extended properties (invisible on the phone) plus a
 small local state file (sync token + processed ids).  The session side talks to us only
@@ -20,8 +33,9 @@ Commands
   --auth            one-time OAuth consent (paste-the-redirect-URL flow, works headless)
   --list-calendars  show calendar ids (to fill comms.toml)
   --once            one poll: pull changes, claim new requests, push pending replies
+  --dry-run         with --once: report what would be claimed / detected, write nothing
   --loop            poll forever (interval from config)
-  --reply ID --status done|question --text "…"   hand-written reply (testing)
+  --reply ID --status done|question|progress --text "…"   hand-written reply (testing)
   --show ID         dump one event
 """
 from __future__ import annotations
@@ -43,7 +57,14 @@ SCOPES = [
 ]
 PREFIX = {"claimed": "⏳ ", "done": "✓ ", "question": "? "}
 COLOR = {"claimed": "5", "done": "10", "question": "11"}  # Banana / Basil / Tomato
-SEPARATOR = "\n\n———\n"
+PROGRESS_PREFIX = "⏳ "
+PROGRESS_SEP = " · "
+TIER_WORDS = {  # words voice may put in the title → tier; first match wins
+    "cheap": "low", "light": "low", "low": "low", "quick": "low", "haiku": "low",
+    "medium": "medium", "sonnet": "medium",
+    "heavy": "high", "deep": "high", "high": "high", "opus": "high", "fable": "high",
+}
+TIER_DEFAULTS = {"query": "low", "design": "high"}  # title kind word → default tier
 
 
 # ----------------------------------------------------------------------------- config
@@ -58,6 +79,7 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("reply_buzz", True)
     cfg.setdefault("reply_buzz_lead_minutes", 2)
     cfg.setdefault("note_anchor_date", "2000-01-01")
+    cfg.setdefault("default_tier", "medium")
     for key, default in {
         "spool_dir": "spool",
         "state_file": "state/poller_state.json",
@@ -165,6 +187,56 @@ def is_note(ev: dict, cfg: dict) -> bool:
     return when.startswith(cfg["note_anchor_date"])
 
 
+def strip_progress(summary: str) -> str:
+    """'⏳ step 2 of 3 · Query - foo' → 'Query - foo' (a plain claimed prefix is left to strip_prefix)."""
+    if summary.startswith(PROGRESS_PREFIX) and PROGRESS_SEP in summary:
+        return summary.split(PROGRESS_SEP, 1)[1]
+    return summary
+
+
+def base_title(summary: str) -> str:
+    return strip_prefix(strip_progress(summary or ""))
+
+
+def detect_tier(summary: str, cfg: dict) -> str:
+    """Tier from the title: an explicit tier word anywhere wins, else the kind word
+    (Query → low, Design → high), else cfg default_tier."""
+    words = re.findall(r"[a-z]+", base_title(summary).lower())
+    for w in words:
+        if w in TIER_WORDS:
+            return TIER_WORDS[w]
+    for w in words:
+        if w in TIER_DEFAULTS:
+            return TIER_DEFAULTS[w]
+    return cfg["default_tier"]
+
+
+def thread_root(state: dict, event_id: str) -> str:
+    """Follow reply_to links ('Re:' events) back to the thread's first event."""
+    seen = set()
+    cur = event_id
+    while cur not in seen:
+        seen.add(cur)
+        parent = state["processed"].get(cur, {}).get("reply_to")
+        if not parent:
+            return cur
+        cur = parent
+    return cur
+
+
+def thread_path(cfg: dict, root: str) -> Path:
+    return Path(cfg["spool_dir"]) / "threads" / f"{root}.md"
+
+
+def thread_append(cfg: dict, root: str, title: str, heading: str, text: str) -> None:
+    p = thread_path(cfg, root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if not p.exists():
+        p.write_text(f"# Thread {root} — {title}\n")
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(f"\n## {heading}\n\n{text.strip()}\n")
+
+
 def find_reply_target(state: dict, summary: str) -> str | None:
     """'Re: <title>' → the processed event id whose stripped title matches."""
     if not summary.lower().startswith("re:"):
@@ -217,10 +289,21 @@ def pull_changes(svc, cfg: dict, state: dict) -> list[dict]:
     return events
 
 
-def claim(svc, cfg: dict, state: dict, ev: dict) -> None:
+def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
+          undelivered_reply: str | None = None) -> None:
+    """Claim a request — a brand-new event, or a NEW TURN on an already-answered one
+    (whiteboard). Writes the inbox file, appends the question to the thread file."""
     eid = ev["id"]
-    summary = ev.get("summary") or "(untitled)"
-    reply_to = find_reply_target(state, summary)
+    summary = base_title(ev.get("summary") or "(untitled)")
+    rec = state["processed"].get(eid)
+    turn = (rec.get("turn", 1) + 1) if rec else 1
+    reply_to = rec.get("reply_to") if rec else find_reply_target(state, summary)
+    description = (ev.get("description") or "").strip()
+    tier = detect_tier(summary, cfg)
+    if dry_run:
+        what = f"new turn {turn} on" if rec else "claim"
+        log(f"[dry-run] would {what} {eid}: {summary!r} tier={tier}" + (f" (re: {reply_to})" if reply_to else ""))
+        return
     claimed_at = now_iso(cfg["timezone"])
     body = {
         "summary": PREFIX["claimed"] + summary,
@@ -229,17 +312,33 @@ def claim(svc, cfg: dict, state: dict, ev: dict) -> None:
             "comms_state": "claimed",
             "comms_claimed_at": claimed_at,
             "comms_stream": cfg["stream"],
+            "comms_turn": str(turn),
         }},
     }
     svc.events().patch(calendarId=cfg["calendar_id"], eventId=eid, body=body).execute()
+    if rec is None:
+        state["processed"][eid] = {"summary": summary, "reply_to": reply_to}
+    rec = state["processed"][eid]
+    rec.update({"claimed_at": claimed_at, "state": "claimed", "turn": turn,
+                "original_description": description, "last_written": None})
+    root = thread_root(state, eid)
+    thread_append(cfg, root, summary, f"Turn {turn} — {cfg['stream']} asked · {claimed_at[:16]}", description or "(no body)")
+    if undelivered_reply:
+        thread_append(cfg, root, summary, f"Turn {turn - 1} — reply NOT delivered (slot was overwritten) · {claimed_at[:16]}",
+                      undelivered_reply)
     req = {
         "event_id": eid,
         "calendar_id": cfg["calendar_id"],
         "stream": cfg["stream"],
-        "kind": "followup" if reply_to else "request",
+        "kind": "followup" if reply_to else ("turn" if turn > 1 else "request"),
         "reply_to": reply_to,
+        "turn": turn,
+        "tier": tier,
+        "thread_file": str(thread_path(cfg, root)),
+        "thread_root": root,
         "summary": summary,
-        "description": ev.get("description") or "",
+        "description": description,
+        "undelivered_reply": undelivered_reply,
         "start": ev.get("start", {}),
         "created": ev.get("created"),
         "updated": ev.get("updated"),
@@ -251,27 +350,56 @@ def claim(svc, cfg: dict, state: dict, ev: dict) -> None:
     tmp = inbox / f".{eid}.json.tmp"
     tmp.write_text(json.dumps(req, indent=1, ensure_ascii=False))
     tmp.replace(inbox / f"{eid}.json")  # atomic appear
-    state["processed"][eid] = {"summary": summary, "claimed_at": claimed_at, "state": "claimed",
-                               "original_description": ev.get("description") or ""}
-    log(f"claimed {eid}: {summary!r}" + (f" (re: {reply_to})" if reply_to else ""))
+    log(f"claimed {eid} turn {turn} tier {tier}: {summary!r}" + (f" (re: {reply_to})" if reply_to else ""))
+
+
+def is_new_turn(state: dict, ev: dict) -> bool:
+    """An answered event whose (non-empty) description differs from what we last wrote."""
+    rec = state["processed"].get(ev["id"])
+    if not rec or rec.get("state") not in ("done", "question"):
+        return False
+    desc = (ev.get("description") or "").strip()
+    if not desc:
+        return False  # the wipe half of a wipe-then-write edit: wait for the write
+    if "turn" not in rec:
+        # Answered before the whiteboard (reply appended under "Reply from <stream> · …"):
+        # only a description that no longer carries that reply is a new turn.
+        return f" from {rec.get('stream', '')}".strip() not in desc and "Reply from" not in desc and "Question from" not in desc
+    return desc != (rec.get("last_written") or "").strip()
 
 
 def apply_reply(svc, cfg: dict, state: dict, event_id: str, status: str, text: str) -> None:
-    if status not in ("done", "question"):
-        raise ValueError("status must be done|question")
+    if status not in ("done", "question", "progress"):
+        raise ValueError("status must be done|question|progress")
+    from googleapiclient.errors import HttpError
+
     cal = cfg["calendar_id"]
     ev = svc.events().get(calendarId=cal, eventId=event_id).execute()
-    base_summary = strip_prefix(ev.get("summary") or "")
-    rec = state["processed"].get(event_id, {})
-    original = rec.get("original_description", ev.get("description") or "")
-    stamp = datetime.now(ZoneInfo(cfg["timezone"])).strftime("%a %d %b %H:%M")
-    label = "Reply" if status == "done" else "Question"
-    description = (original.rstrip() + SEPARATOR if original.strip() else "") + f"{label} from {cfg['stream']} · {stamp}\n{text.strip()}"
+    base = base_title(ev.get("summary") or "")
+    rec = state["processed"].setdefault(event_id, {"summary": base})
+    root = thread_root(state, event_id)
+    turn = rec.get("turn", 1)
+    stamp = now_iso(cfg["timezone"])
+    if status == "progress":
+        # Heartbeat: TITLE only — the description is the user's slot and stays untouched.
+        body = {"summary": PROGRESS_PREFIX + text.strip().replace("\n", " ")[:80] + PROGRESS_SEP + base}
+        svc.events().patch(calendarId=cal, eventId=event_id, body=body).execute()
+        thread_append(cfg, root, base, f"Turn {turn} — progress · {stamp[:16]}", text)
+        log(f"progress on {event_id}: {text.strip()[:60]!r}")
+        return
+    # Guard: the phone may have written the next turn while this reply waited in the outbox.
+    current = (ev.get("description") or "").strip()
+    if rec.get("state") == "claimed" and current and current != (rec.get("original_description") or "").strip():
+        log(f"slot on {event_id} changed while we worked — claiming the new turn, reply attached")
+        claim(svc, cfg, state, ev, undelivered_reply=text)
+        return
+    reply = text.strip()
     body = {
-        "summary": PREFIX[status] + base_summary,
+        "summary": PREFIX[status] + base,
         "colorId": COLOR[status],
-        "description": description,
-        "extendedProperties": {"private": {"comms_state": status, "comms_replied_at": now_iso(cfg["timezone"])}},
+        "description": reply,
+        "extendedProperties": {"private": {"comms_state": status, "comms_replied_at": stamp,
+                                           "comms_turn": str(turn)}},
     }
     if cfg["reply_buzz"]:
         # Reminders only fire ahead of the start, so slide the event to "now" and set a
@@ -282,10 +410,26 @@ def apply_reply(svc, cfg: dict, state: dict, event_id: str, status: str, text: s
         body["start"] = {"dateTime": start.isoformat(timespec="seconds"), "timeZone": cfg["timezone"], "date": None}
         body["end"] = {"dateTime": end.isoformat(timespec="seconds"), "timeZone": cfg["timezone"], "date": None}
         body["reminders"] = {"useDefault": False, "overrides": [{"method": "popup", "minutes": 1}]}
-    svc.events().patch(calendarId=cal, eventId=event_id, body=body).execute()
-    state["processed"].setdefault(event_id, {"summary": base_summary})
-    state["processed"][event_id]["state"] = status
-    log(f"replied {status} on {event_id}: {base_summary!r}")
+    req = svc.events().patch(calendarId=cal, eventId=event_id, body=body)
+    req.headers["If-Match"] = ev["etag"]  # conditional write: never clobber a newer turn
+    try:
+        req.execute()
+    except HttpError as e:
+        if e.resp.status != 412:
+            raise
+        log(f"etag conflict on {event_id} — re-reading")
+        fresh = svc.events().get(calendarId=cal, eventId=event_id).execute()
+        newest = (fresh.get("description") or "").strip()
+        if newest and newest != (rec.get("original_description") or "").strip():
+            claim(svc, cfg, state, fresh, undelivered_reply=text)
+            return
+        req = svc.events().patch(calendarId=cal, eventId=event_id, body=body)
+        req.headers["If-Match"] = fresh["etag"]
+        req.execute()
+    rec["state"] = status
+    rec["last_written"] = reply
+    thread_append(cfg, root, base, f"Turn {turn} — {cfg['stream']} replied ({status}) · {stamp[:16]}", reply)
+    log(f"replied {status} on {event_id} turn {turn}: {base!r}")
 
 
 def push_outbox(svc, cfg: dict, state: dict) -> int:
@@ -304,18 +448,27 @@ def push_outbox(svc, cfg: dict, state: dict) -> int:
     return n
 
 
-def poll_once(svc, cfg: dict, state: dict) -> None:
+def poll_once(svc, cfg: dict, state: dict, *, dry_run: bool = False) -> None:
+    saved_token = state.get("sync_token")
     changed = pull_changes(svc, cfg, state)
     for ev in changed:
         if ev.get("status") == "cancelled":
             continue
-        if comms_state(ev) or ev["id"] in state["processed"]:
-            continue
         if is_note(ev, cfg):
             continue  # passive context note: leave it completely untouched
-        if strip_prefix(ev.get("summary") or "") != (ev.get("summary") or ""):
+        if ev["id"] in state["processed"]:
+            if is_new_turn(state, ev):
+                claim(svc, cfg, state, ev, dry_run=dry_run)  # whiteboard: next turn of the thread
+            continue
+        if comms_state(ev):
+            continue  # claimed/answered by an earlier state file we no longer have: leave it
+        if base_title(ev.get("summary") or "") != (ev.get("summary") or ""):
             continue  # a prefixed title we somehow don't know: leave it alone
-        claim(svc, cfg, state, ev)
+        claim(svc, cfg, state, ev, dry_run=dry_run)
+    if dry_run:
+        state["sync_token"] = saved_token  # rehearsal: the next real poll sees the same changes
+        log("[dry-run] nothing written; state not saved")
+        return
     save_state(cfg, state)
     if push_outbox(svc, cfg, state):
         save_state(cfg, state)
@@ -332,7 +485,8 @@ def main() -> None:
     g.add_argument("--loop", action="store_true")
     g.add_argument("--reply", metavar="EVENT_ID")
     g.add_argument("--show", metavar="EVENT_ID")
-    ap.add_argument("--status", choices=["done", "question"], default="done")
+    ap.add_argument("--status", choices=["done", "question", "progress"], default="done")
+    ap.add_argument("--dry-run", action="store_true", help="with --once: rehearse, write nothing")
     ap.add_argument("--text", default="")
     args = ap.parse_args()
 
@@ -353,7 +507,7 @@ def main() -> None:
         apply_reply(svc, cfg, state, args.reply, args.status, args.text)
         save_state(cfg, state)
     elif args.once:
-        poll_once(svc, cfg, state)
+        poll_once(svc, cfg, state, dry_run=args.dry_run)
     elif args.loop:
         interval = int(cfg["poll_interval_seconds"])
         log(f"polling {cfg['calendar_id']} every {interval}s")

@@ -33,11 +33,19 @@ DEBUG_LOG="$here/state/inbox-debug.log"; : > "$DEBUG_LOG"
 cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE --debug-file \"$DEBUG_LOG\" ${COMMS_EXTRA_FLAGS:-}"
 if [ -n "$USE_CHANNEL" ]; then
   mcp="$here/state/mcp-config.json"
-  python3 - "$mcp" "$NODE_BIN" "$here" "$STREAM" <<'EOF'
-import json, sys
-out, node, here, stream = sys.argv[1:5]
-json.dump({"mcpServers": {"comms": {"command": node, "args": [f"{here}/comms_channel.mjs"],
-           "env": {"COMMS_SPOOL": f"{here}/spool", "COMMS_STREAM": stream}}}}, open(out, "w"), indent=1)
+  python3 - "$mcp" "$NODE_BIN" "$here" "$STREAM" "$cfg" "$TMUX_NAME" <<'EOF'
+import json, sys, tomllib
+out, node, here, stream, cfgpath, tmux_name = sys.argv[1:7]
+cfg = tomllib.load(open(cfgpath, "rb"))
+env = {"COMMS_SPOOL": f"{here}/spool", "COMMS_STREAM": stream,
+       # sequencer + tier switching (2026-09-08): the shim types the /model picker into this pane
+       "COMMS_TMUX": tmux_name,
+       "COMMS_TIER_SWITCH": str(cfg.get("tier_switch", "off")),
+       "COMMS_TURN_TIMEOUT_MS": str(int(cfg.get("turn_timeout_minutes", 45)) * 60_000),
+       "COMMS_TIER_ORDER": json.dumps(cfg.get("tier_order", ["low", "medium", "high"])),
+       "COMMS_TIERS": json.dumps(cfg.get("tiers", {}))}
+json.dump({"mcpServers": {"comms": {"command": node, "args": [f"{here}/comms_channel.mjs"], "env": env}}},
+          open(out, "w"), indent=1)
 EOF
   cmd="$cmd --mcp-config \"$mcp\" $USE_CHANNEL"
 fi

@@ -18,9 +18,11 @@ phone Remote Control ───────────────────�
 
 | file | side | role |
 |---|---|---|
-| `comms_poller.py` | Google | sync-token poll, claim new events (⏳), write `spool/inbox/*.json`, push `spool/outbox/*.json` replies (✓ / ?, brief, buzz) |
+| `comms_poller.py` | Google | sync-token poll, claim new events (⏳) AND new turns (whiteboard: an answered event whose description ≠ the text we last wrote), stamp the title's tier word, write `spool/inbox/*.json`, append both sides to `spool/threads/<root>.md`, push `spool/outbox/*.json` replies (✓ / ? replace the description; `progress` marks the title only; etag conditional write, conflict → the newer turn is claimed with the undelivered reply attached; `--once --dry-run` rehearses) |
 | context notes | Google | a title starting `Note:` / `note -` / `note ` (any case), or any event on `note_anchor_date` (2000-01-01), is a passive context note: the poller never claims, colours, spools or records it (2026-09-08) |
-| `comms_channel.mjs` | Claude | **route 2**: MCP channel server run by the session; pushes inbox files in as `<channel>` events, exposes `comms_reply` |
+| `comms_channel.mjs` | Claude | **route 2**: MCP channel server run by the session; the SEQUENCER since 2026-09-08 — admits ONE turn at a time (done/question ends it, progress doesn't, 45-min timeout, restart = ended), sorts the queue by tier (same-as-current first), optionally switches model/effort via the `/model` picker in the tmux pane (`tier_switch = "picker"`, session-only `s` confirm) before a turn of a different tier; exposes `comms_reply` (done/question/progress) |
+| `docs/voice-profile.md` | phone | the voice side of the contract: kind words, tier words, single-edit turn writes, reading replies, context notes |
+| `bin/tier-switch-test` | both | rehearses the picker keystroke sequence on a SCRATCH session; run before enabling `tier_switch` |
 | `comms_send_p.py` | Claude | **route 3** fallback: `claude -p` + SendMessage per inbox file |
 | `bin/comms-reply` | Claude | write an outbox reply from a shell (route 3 or by hand) |
 | `bin/inbox-session` | Claude | launches `claude --remote-control --name "<Stream> inbox"` with the route-2 flags |
