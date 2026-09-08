@@ -29,7 +29,8 @@ if ! curl -sS -o /dev/null --max-time 10 "$PROBE_URL"; then
 fi
 
 mkdir -p "$here/state"
-cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE"
+DEBUG_LOG="$here/state/inbox-debug.log"; : > "$DEBUG_LOG"
+cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE --debug-file \"$DEBUG_LOG\" ${RELAY_EXTRA_FLAGS:-}"
 if [ -n "$USE_CHANNEL" ]; then
   mcp="$here/state/mcp-config.json"
   python3 - "$mcp" "$NODE_BIN" "$here" "$STREAM" <<'EOF'
@@ -55,6 +56,16 @@ if [ -n "$USE_CHANNEL" ]; then
     fi
     sleep 1
   done
+  # Verify the shim actually registered (a startup race once left the session without it,
+  # 2026-09-08). No registration → exit 1 and let systemd restart us.
+  for _ in $(seq 1 45); do
+    grep -q 'MCP server "relay": Channel notifications registered' "$DEBUG_LOG" 2>/dev/null && { echo "inbox-session: channel registered" >&2; break; }
+    sleep 1
+  done
+  if ! grep -q 'Channel notifications registered' "$DEBUG_LOG" 2>/dev/null; then
+    echo "inbox-session: channel did NOT register within 45s; stopping for restart" >&2
+    tmux kill-session -t "$TMUX_NAME" 2>/dev/null; exit 1
+  fi
 fi
 
 # Stay in the foreground for systemd; exit (→ Restart=always) when the session ends.
