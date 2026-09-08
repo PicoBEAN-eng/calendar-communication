@@ -141,6 +141,7 @@ async function keys(...ks) {
 async function switchTier(tier) {
   const spec = TIERS[tier];
   if (!spec || TIER_SWITCH === "off" || !TMUX) return;
+  if (tier === currentTier) return; // already in this gear: no keystrokes, no cache miss
   const row = PICKER_ROWS[spec.model];
   const eff = EFFORT_LADDER.indexOf(spec.effort);
   if (!row || eff < 0) return log("tier switch: unknown model/effort in", tier, spec);
