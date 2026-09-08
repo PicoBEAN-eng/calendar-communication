@@ -1,9 +1,9 @@
 {
-  "name": "nexus-relay",
+  "name": "nexus-comms",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Google Calendar <-> Claude Code inbox session relay (per-container)",
+  "description": "Google Calendar <-> Claude Code inbox session comms (per-container)",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.5.4"

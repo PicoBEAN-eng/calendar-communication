@@ -1,5 +1,5 @@
 [Unit]
-Description=nexus-relay: poll the stream calendar every minute
+Description=nexus-comms: poll the stream calendar every minute
 
 [Timer]
 OnBootSec=2min

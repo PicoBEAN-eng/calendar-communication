@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""nexus-relay fallback sender (route 3): deliver spool/inbox requests to the named inbox
+"""nexus-comms fallback sender (route 3): deliver spool/inbox requests to the named inbox
 session with a one-shot `claude -p` that calls the documented SendMessage tool.
 
 Costs one small model call per request (~10 s); needs no preview flags.  The receiving
-session has no relay_reply tool on this route — it replies with bin/relay-reply instead.
+session has no comms_reply tool on this route — it replies with bin/comms-reply instead.
 
-  relay_send_p.py --config relay.toml            # deliver everything in the inbox
-  relay_send_p.py --config relay.toml --dry-run  # show the prompt, send nothing
+  comms_send_p.py --config comms.toml            # deliver everything in the inbox
+  comms_send_p.py --config comms.toml --dry-run  # show the prompt, send nothing
 """
 from __future__ import annotations
 
@@ -21,14 +21,14 @@ from pathlib import Path
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=str(Path(__file__).parent / "relay.toml"))
+    ap.add_argument("--config", default=str(Path(__file__).parent / "comms.toml"))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     cfg = tomllib.load(open(args.config, "rb"))
     base = Path(args.config).parent
     spool = (base / cfg.get("spool_dir", "spool")).expanduser()
-    session = cfg.get("session_name", "relay inbox")
-    reply_cmd = str((base / "bin" / "relay-reply").resolve())
+    session = cfg.get("session_name", "comms inbox")
+    reply_cmd = str((base / "bin" / "comms-reply").resolve())
     inbox, delivered = spool / "inbox", spool / "inbox" / "delivered"
     delivered.mkdir(parents=True, exist_ok=True)
     claude = shutil.which("claude") or "/run/current-system/sw/bin/claude"
@@ -36,7 +36,7 @@ def main() -> None:
     for f in sorted(inbox.glob("*.json")):
         req = json.loads(f.read_text())
         body = [
-            f"Relay {req.get('kind', 'request')} from the {req.get('stream')} calendar (event_id: {req['event_id']})",
+            f"Comms {req.get('kind', 'request')} from the {req.get('stream')} calendar (event_id: {req['event_id']})",
             f"Title: {req['summary']}",
         ]
         if req.get("reply_to"):

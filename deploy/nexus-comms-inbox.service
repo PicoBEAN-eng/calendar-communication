@@ -1,15 +1,15 @@
-# ~/.config/systemd/user/nexus-relay-inbox.service — the named inbox session.
+# ~/.config/systemd/user/nexus-comms-inbox.service — the named inbox session.
 # Prereqs (once, interactively, as this user): claude login; trust session_cwd; accept the
 # Remote Control consent (claude remote-control → y).  The session runs inside tmux
-# session "relay-inbox" (attach with: tmux attach -t relay-inbox).
+# session "comms-inbox" (attach with: tmux attach -t comms-inbox).
 [Unit]
-Description=nexus-relay: inbox Claude Code session (Remote Control + channel shim)
+Description=nexus-comms: inbox Claude Code session (Remote Control + channel shim)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=%h/nexus-relay/bin/inbox-session
-ExecStop=/bin/sh -c 'tmux kill-session -t relay-inbox 2>/dev/null || true'
+ExecStart=%h/nexus-comms/bin/inbox-session
+ExecStop=/bin/sh -c 'tmux kill-session -t comms-inbox 2>/dev/null || true'
 Restart=always
 RestartSec=30
 Environment=HOME=%h

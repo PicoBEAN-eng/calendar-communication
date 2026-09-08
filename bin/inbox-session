@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 # The container's inbox session: one named Claude Code session, reachable from the phone
-# via Remote Control, that the relay feeds.  Same shape as woolly-workplace/bin/remote-control
+# via Remote Control, that the comms feeds.  Same shape as woolly-workplace/bin/remote-control
 # (connectivity gate + Restart=always self-heal), run inside a tmux session so that
 #   - the --dangerously-load-development-channels consent dialog (shown at EVERY start,
 #     not persisted — verified 2026-09-08) can be answered automatically, and
-#   - you can `tmux attach -t relay-inbox` locally to watch or type.
-# The MCP config for the channel shim is generated here from relay.toml; nothing needs
+#   - you can `tmux attach -t comms-inbox` locally to watch or type.
+# The MCP config for the channel shim is generated here from comms.toml; nothing needs
 # registering in ~/.claude.json.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cfg="${RELAY_CONFIG:-$here/relay.toml}"
+cfg="${COMMS_CONFIG:-$here/comms.toml}"
 [ -f "$cfg" ] || { echo "inbox-session: no $cfg" >&2; exit 1; }
 
 get() { python3 -c 'import tomllib,sys; print(tomllib.load(open(sys.argv[1],"rb")).get(sys.argv[2], sys.argv[3]))' "$cfg" "$1" "${2:-}"; }
-NAME="$(get session_name "relay inbox")"
+NAME="$(get session_name "comms inbox")"
 CWD="$(get session_cwd "$HOME")"
 MODE="$(get permission_mode auto)"
-STREAM="$(get stream relay)"
+STREAM="$(get stream comms)"
 USE_CHANNEL="$(get channel_flags "")"          # non-empty → route 2 (channel shim)
-TMUX_NAME="${RELAY_TMUX_NAME:-relay-inbox}"
-PROBE_URL="${RELAY_PROBE_URL:-https://api.anthropic.com/}"
-CLAUDE_BIN="${RELAY_CLAUDE_BIN:-$(command -v claude || echo /run/current-system/sw/bin/claude)}"
+TMUX_NAME="${COMMS_TMUX_NAME:-comms-inbox}"
+PROBE_URL="${COMMS_PROBE_URL:-https://api.anthropic.com/}"
+CLAUDE_BIN="${COMMS_CLAUDE_BIN:-$(command -v claude || echo /run/current-system/sw/bin/claude)}"
 NODE_BIN="$(command -v node || echo "$HOME/.local/bin/node")"
 
 if ! curl -sS -o /dev/null --max-time 10 "$PROBE_URL"; then
@@ -30,14 +30,14 @@ fi
 
 mkdir -p "$here/state"
 DEBUG_LOG="$here/state/inbox-debug.log"; : > "$DEBUG_LOG"
-cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE --debug-file \"$DEBUG_LOG\" ${RELAY_EXTRA_FLAGS:-}"
+cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE --debug-file \"$DEBUG_LOG\" ${COMMS_EXTRA_FLAGS:-}"
 if [ -n "$USE_CHANNEL" ]; then
   mcp="$here/state/mcp-config.json"
   python3 - "$mcp" "$NODE_BIN" "$here" "$STREAM" <<'EOF'
 import json, sys
 out, node, here, stream = sys.argv[1:5]
-json.dump({"mcpServers": {"relay": {"command": node, "args": [f"{here}/relay_channel.mjs"],
-           "env": {"RELAY_SPOOL": f"{here}/spool", "RELAY_STREAM": stream}}}}, open(out, "w"), indent=1)
+json.dump({"mcpServers": {"comms": {"command": node, "args": [f"{here}/comms_channel.mjs"],
+           "env": {"COMMS_SPOOL": f"{here}/spool", "COMMS_STREAM": stream}}}}, open(out, "w"), indent=1)
 EOF
   cmd="$cmd --mcp-config \"$mcp\" $USE_CHANNEL"
 fi
@@ -59,7 +59,7 @@ if [ -n "$USE_CHANNEL" ]; then
   # Verify the shim actually registered (a startup race once left the session without it,
   # 2026-09-08). No registration → exit 1 and let systemd restart us.
   for _ in $(seq 1 45); do
-    grep -q 'MCP server "relay": Channel notifications registered' "$DEBUG_LOG" 2>/dev/null && { echo "inbox-session: channel registered" >&2; break; }
+    grep -q 'MCP server "comms": Channel notifications registered' "$DEBUG_LOG" 2>/dev/null && { echo "inbox-session: channel registered" >&2; break; }
     sleep 1
   done
   if ! grep -q 'Channel notifications registered' "$DEBUG_LOG" 2>/dev/null; then

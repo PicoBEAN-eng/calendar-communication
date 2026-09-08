@@ -1,6 +1,6 @@
-# nexus-relay — one file per container. Copy to relay.toml and fill in.
+# nexus-comms — one file per container. Copy to comms.toml and fill in.
 stream = "Woolly"                      # name shown in replies / channel meta
-calendar_id = "xxxx@group.calendar.google.com"   # from: relay_poller.py --list-calendars
+calendar_id = "xxxx@group.calendar.google.com"   # from: comms_poller.py --list-calendars
 timezone = "Australia/Melbourne"
 
 # inbox session (bin/inbox-session)
@@ -8,7 +8,7 @@ session_name = "Woolly inbox"          # the Remote Control name you tap on the 
 session_cwd = "/home/woollyworkplace/woolly-workplace"
 permission_mode = "auto"               # auto | acceptEdits | default …
 # route 2 (channels) flags; leave empty to run the session without the channel shim (route 3)
-channel_flags = "--dangerously-load-development-channels server:relay"
+channel_flags = "--dangerously-load-development-channels server:comms"
 
 poll_interval_seconds = 60
 backfill_hours = 0                     # first run: how far back to sweep for requests (0 = from now)

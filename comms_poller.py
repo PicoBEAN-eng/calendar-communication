@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nexus-relay poller — the Google Calendar side of the relay.
+"""nexus-comms poller — the Google Calendar side of the comms.
 
 One stream calendar (a secondary calendar on the Gmail account) is the message bus:
 
@@ -18,7 +18,7 @@ through the spool directory:
 
 Commands
   --auth            one-time OAuth consent (paste-the-redirect-URL flow, works headless)
-  --list-calendars  show calendar ids (to fill relay.toml)
+  --list-calendars  show calendar ids (to fill comms.toml)
   --once            one poll: pull changes, claim new requests, push pending replies
   --loop            poll forever (interval from config)
   --reply ID --status done|question --text "…"   hand-written reply (testing)
@@ -50,7 +50,7 @@ def load_config(path: Path) -> dict:
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     base = path.parent
-    cfg.setdefault("stream", "relay")
+    cfg.setdefault("stream", "comms")
     cfg.setdefault("timezone", "Australia/Melbourne")
     cfg.setdefault("poll_interval_seconds", 60)
     cfg.setdefault("backfill_hours", 0)
@@ -78,7 +78,7 @@ def get_service(cfg: dict):
 
     token_path = Path(cfg["token_file"])
     if not token_path.exists():
-        sys.exit(f"no token at {token_path} — run: relay_poller.py --auth")
+        sys.exit(f"no token at {token_path} — run: comms_poller.py --auth")
     creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
     if not creds.valid:
         if creds.expired and creds.refresh_token:
@@ -142,8 +142,8 @@ def strip_prefix(summary: str) -> str:
     return summary
 
 
-def relay_state(ev: dict) -> str | None:
-    return (ev.get("extendedProperties") or {}).get("private", {}).get("relay_state")
+def comms_state(ev: dict) -> str | None:
+    return (ev.get("extendedProperties") or {}).get("private", {}).get("comms_state")
 
 
 def now_iso(tz: str) -> str:
@@ -205,9 +205,9 @@ def claim(svc, cfg: dict, state: dict, ev: dict) -> None:
         "summary": PREFIX["claimed"] + summary,
         "colorId": COLOR["claimed"],
         "extendedProperties": {"private": {
-            "relay_state": "claimed",
-            "relay_claimed_at": claimed_at,
-            "relay_stream": cfg["stream"],
+            "comms_state": "claimed",
+            "comms_claimed_at": claimed_at,
+            "comms_stream": cfg["stream"],
         }},
     }
     svc.events().patch(calendarId=cfg["calendar_id"], eventId=eid, body=body).execute()
@@ -250,7 +250,7 @@ def apply_reply(svc, cfg: dict, state: dict, event_id: str, status: str, text: s
         "summary": PREFIX[status] + base_summary,
         "colorId": COLOR[status],
         "description": description,
-        "extendedProperties": {"private": {"relay_state": status, "relay_replied_at": now_iso(cfg["timezone"])}},
+        "extendedProperties": {"private": {"comms_state": status, "comms_replied_at": now_iso(cfg["timezone"])}},
     }
     if cfg["reply_buzz"]:
         # Reminders only fire ahead of the start, so slide the event to "now" and set a
@@ -288,7 +288,7 @@ def poll_once(svc, cfg: dict, state: dict) -> None:
     for ev in changed:
         if ev.get("status") == "cancelled":
             continue
-        if relay_state(ev) or ev["id"] in state["processed"]:
+        if comms_state(ev) or ev["id"] in state["processed"]:
             continue
         if strip_prefix(ev.get("summary") or "") != (ev.get("summary") or ""):
             continue  # a prefixed title we somehow don't know: leave it alone
@@ -301,7 +301,7 @@ def poll_once(svc, cfg: dict, state: dict) -> None:
 # ----------------------------------------------------------------------------- main
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", default=str(Path(__file__).parent / "relay.toml"))
+    ap.add_argument("--config", default=str(Path(__file__).parent / "comms.toml"))
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--auth", action="store_true")
     g.add_argument("--list-calendars", action="store_true")
@@ -322,7 +322,7 @@ def main() -> None:
             print(f"{c['id']:60s}  {c.get('summary')}  {'(primary)' if c.get('primary') else ''}")
         return
     if "calendar_id" not in cfg:
-        sys.exit("relay.toml needs calendar_id (see --list-calendars)")
+        sys.exit("comms.toml needs calendar_id (see --list-calendars)")
     state = load_state(cfg)
     if args.show:
         print(json.dumps(svc.events().get(calendarId=cfg["calendar_id"], eventId=args.show).execute(), indent=1))

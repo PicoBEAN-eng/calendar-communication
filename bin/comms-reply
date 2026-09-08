@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# relay-reply <event_id> done|question "<text>"
+# comms-reply <event_id> done|question "<text>"
 # Queue a reply for the poller without the channel tool (route 3, or by hand).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-spool="${RELAY_SPOOL:-$here/spool}"
-[ $# -eq 3 ] || { echo "usage: relay-reply <event_id> done|question \"<text>\"" >&2; exit 2; }
+spool="${COMMS_SPOOL:-$here/spool}"
+[ $# -eq 3 ] || { echo "usage: comms-reply <event_id> done|question \"<text>\"" >&2; exit 2; }
 case "$2" in done|question) ;; *) echo "status must be done|question" >&2; exit 2;; esac
 mkdir -p "$spool/outbox"
 python3 - "$1" "$2" "$3" "$spool/outbox" <<'EOF'
