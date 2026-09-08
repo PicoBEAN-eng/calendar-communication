@@ -14,6 +14,7 @@ poll_interval_seconds = 60
 backfill_hours = 0                     # first run: how far back to sweep for requests (0 = from now)
 reply_buzz = true                      # slide replied events to "now" + 1-min popup so the phone buzzes
 reply_buzz_lead_minutes = 2
+note_anchor_date = "2000-01-01"   # events on this date, or titled "Note: …", are context notes: never claimed
 
 # paths (relative to this file)
 spool_dir = "spool"

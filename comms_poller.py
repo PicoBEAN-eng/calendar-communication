@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import tomllib
@@ -56,6 +57,7 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("backfill_hours", 0)
     cfg.setdefault("reply_buzz", True)
     cfg.setdefault("reply_buzz_lead_minutes", 2)
+    cfg.setdefault("note_anchor_date", "2000-01-01")
     for key, default in {
         "spool_dir": "spool",
         "state_file": "state/poller_state.json",
@@ -148,6 +150,19 @@ def comms_state(ev: dict) -> str | None:
 
 def now_iso(tz: str) -> str:
     return datetime.now(ZoneInfo(tz)).isoformat(timespec="seconds")
+
+
+NOTE_TITLE = re.compile(r"^\s*note(?:[:\-]|\s)", re.IGNORECASE)
+
+
+def is_note(ev: dict, cfg: dict) -> bool:
+    """Passive context note (2026-09-08): title starts with "note" + colon/space/dash (any case),
+    or the event sits on the anchor date. Never claimed, coloured, spooled or recorded."""
+    if NOTE_TITLE.match(ev.get("summary") or ""):
+        return True
+    start = ev.get("start") or {}
+    when = start.get("date") or start.get("dateTime") or ""
+    return when.startswith(cfg["note_anchor_date"])
 
 
 def find_reply_target(state: dict, summary: str) -> str | None:
@@ -296,6 +311,8 @@ def poll_once(svc, cfg: dict, state: dict) -> None:
             continue
         if comms_state(ev) or ev["id"] in state["processed"]:
             continue
+        if is_note(ev, cfg):
+            continue  # passive context note: leave it completely untouched
         if strip_prefix(ev.get("summary") or "") != (ev.get("summary") or ""):
             continue  # a prefixed title we somehow don't know: leave it alone
         claim(svc, cfg, state, ev)

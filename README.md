@@ -19,6 +19,7 @@ phone Remote Control ───────────────────�
 | file | side | role |
 |---|---|---|
 | `comms_poller.py` | Google | sync-token poll, claim new events (⏳), write `spool/inbox/*.json`, push `spool/outbox/*.json` replies (✓ / ?, brief, buzz) |
+| context notes | Google | a title starting `Note:` / `note -` / `note ` (any case), or any event on `note_anchor_date` (2000-01-01), is a passive context note: the poller never claims, colours, spools or records it (2026-09-08) |
 | `comms_channel.mjs` | Claude | **route 2**: MCP channel server run by the session; pushes inbox files in as `<channel>` events, exposes `comms_reply` |
 | `comms_send_p.py` | Claude | **route 3** fallback: `claude -p` + SendMessage per inbox file |
 | `bin/comms-reply` | Claude | write an outbox reply from a shell (route 3 or by hand) |
