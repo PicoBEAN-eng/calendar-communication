@@ -29,8 +29,10 @@ echo "=== switching to $MODEL / $EFFORT"
 "$NODE_BIN" "$here/tier_switch.mjs" "$S" "$MODEL" "$EFFORT"; rc=$?
 snap "after switch" 6
 
-tmux send-keys -t $S "What was the code word? One word." Enter; sleep 25; snap turn-2 5
-tmux capture-pane -p -t $S -S -80 | grep -E 'with (low|medium|high|xhigh|max) effort' | tail -1
+tmux send-keys -t $S "What was the code word? One word." Enter; sleep 25
+echo "=== transcript check"
+tmux capture-pane -p -t $S -S -300 | grep -E 'What was the code word' -A2 | tail -3
+if tmux capture-pane -p -t $S -S -300 | grep -A2 'What was the code word' | grep -q PELICAN; then echo "transcript KEPT (PELICAN answered after the switch)"; else echo "transcript check INCONCLUSIVE (no PELICAN in the answer)"; rc=1; fi
 echo "switch exit code: $rc (0 = verified)"
 echo "expected: $MODEL with $EFFORT effort · transcript kept if PELICAN came back"
 echo "settings.json modified by the test: $([ "$(stat -c %Y "$settings" 2>/dev/null || echo 0)" != "$before" ] && echo YES — the sequence saved a default, fix before enabling tier_switch || echo no)"
