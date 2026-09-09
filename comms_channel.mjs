@@ -20,8 +20,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { switchTier as driveSwitch } from "./tier_switch.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SPOOL = process.env.COMMS_SPOOL || path.join(here, "spool");
@@ -34,9 +34,6 @@ const TIER_SWITCH = process.env.COMMS_TIER_SWITCH || "off";
 const TURN_TIMEOUT_MS = Number(process.env.COMMS_TURN_TIMEOUT_MS || 45 * 60 * 1000);
 const TIER_ORDER = JSON.parse(process.env.COMMS_TIER_ORDER || '["low","medium","high"]');
 const TIERS = JSON.parse(process.env.COMMS_TIERS || '{"low":{"model":"haiku","effort":"low"},"medium":{"model":"sonnet","effort":"medium"},"high":{"model":"opus","effort":"high"}}');
-// /model picker rows (Claude Code 2.1.259, verified 2026-09-08) and the effort ladder (←/→ in the same picker).
-const PICKER_ROWS = { default: 1, "opus-1m": 2, fable: 3, sonnet: 4, haiku: 5, opus: 6 };
-const EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"];
 for (const d of [INBOX, DELIVERED, OUTBOX]) fs.mkdirSync(d, { recursive: true });
 
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), "[comms]", ...a);
@@ -113,48 +110,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 });
 
 // ---- tier switching (tmux) --------------------------------------------------------------
-function tmux(...args) {
-  if (!TMUX) return null;
-  const r = spawnSync("tmux", args, { encoding: "utf8" });
-  return r.status === 0 ? r.stdout : null;
-}
-function paneIdle() {
-  const pane = tmux("capture-pane", "-p", "-t", TMUX);
-  if (pane == null) return true; // no tmux → nothing to wait for
-  const tail = pane.split("\n").filter((l) => l.trim()).slice(-8).join("\n");
-  return tail.includes("❯") && !/esc to interrupt|thinking with|Baked|Cogitat|Churn|Architect/i.test(tail);
-}
-async function waitIdle(maxMs = 20000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < maxMs) {
-    if (paneIdle()) return true;
-    await sleep(1000);
-  }
-  return false;
-}
-async function keys(...ks) {
-  for (const k of ks) {
-    tmux("send-keys", "-t", TMUX, k);
-    await sleep(150);
-  }
-}
+// The picker driving lives in tier_switch.mjs (shared with bin/tier-switch-test): parse-and-verify
+// /model picker, session-only "s" confirm, answers the "Switch model?" dialog.
 async function switchTier(tier) {
   const spec = TIERS[tier];
   if (!spec || TIER_SWITCH === "off" || !TMUX) return;
   if (tier === currentTier) return; // already in this gear: no keystrokes, no cache miss
-  const row = PICKER_ROWS[spec.model];
-  const eff = EFFORT_LADDER.indexOf(spec.effort);
-  if (!row || eff < 0) return log("tier switch: unknown model/effort in", tier, spec);
-  if (!(await waitIdle())) return log("tier switch: pane not idle, delivering without switching");
-  // /model picker, session-only confirm ("s"): Up×6 → row 1, Down×(row-1), Left×6 → low, Right×eff.
-  await keys("/model", "Enter");
-  await sleep(1500);
-  await keys(...Array(6).fill("Up"), ...Array(row - 1).fill("Down"), ...Array(6).fill("Left"), ...Array(eff).fill("Right"), "s");
-  await sleep(2000);
-  const pane = tmux("capture-pane", "-p", "-t", TMUX) || "";
-  const line = pane.split("\n").reverse().find((l) => /Set model|Kept model|session only|with (low|medium|high|xhigh|max) effort/i.test(l));
-  log(`tier switch → ${tier} (${spec.model}/${spec.effort}):`, (line || "no confirmation line").trim());
-  currentTier = tier;
+  try {
+    const r = await driveSwitch(TMUX, spec.model, spec.effort, log);
+    if (r.ok) currentTier = tier;
+    else log(`tier switch → ${tier} NOT verified (${r.reason}); delivering under the current gear`);
+  } catch (e) {
+    log("tier switch failed:", e.message);
+  }
 }
 
 // ---- inbox queue ---------------------------------------------------------------------------

@@ -1,43 +1,38 @@
 #!/usr/bin/env bash
 # Rehearse the shim's tier switch against a SCRATCH Claude Code session (never the live inbox).
 #
-#   bin/tier-switch-test [model-row-name] [effort]      e.g.  bin/tier-switch-test haiku low
+#   bin/tier-switch-test [model] [effort]      e.g.  bin/tier-switch-test haiku low
+#   models: default opus-1m fable sonnet haiku opus   effort: low medium high xhigh max
 #
-# Verified 2026-09-08 (Claude Code 2.1.259): typed "/model <x>" and "/effort <x>" switch
-# mid-session and KEEP the transcript (a code word survived the switch) — but the argument
-# forms also save the choice as the user's default for new sessions, which the shim must not
-# do. The /model picker offers "s = this session only" and holds the effort ladder (←/→), so
-# the shim uses the picker: Up×6 → row 1, Down×(row-1), Left×6 → low, Right×effort, then "s".
-# What this script checks is exactly that keystroke sequence. Watch it: tmux attach -t comms-tier-test
+# Drives exactly what the shim drives: tier_switch.mjs (parse-and-verify /model picker,
+# session-only "s" confirm, answers the "Switch model?" dialog). Verified facts (2.1.259,
+# 2026-09-08/09): mid-session model+effort switches keep the transcript; typed "/model x" /
+# "/effort x" save the user's default (never used); the picker row list varies (5 or 6 rows)
+# and wraps, hence parse-and-verify. Watch live: tmux attach -t comms-tier-test
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL="${1:-haiku}"; EFFORT="${2:-low}"
 S=comms-tier-test
 CWD="${COMMS_TEST_CWD:-$HOME/woolly-workplace}"    # must be an already-trusted folder (no trust dialog)
-declare -A ROWS=([default]=1 [opus-1m]=2 [fable]=3 [sonnet]=4 [haiku]=5 [opus]=6)
-declare -A EFF=([low]=0 [medium]=1 [high]=2 [xhigh]=3 [max]=4)
-row="${ROWS[$MODEL]:-}"; eff="${EFF[$EFFORT]:-}"
-[ -n "$row" ] && [ -n "$eff" ] || { echo "unknown model/effort (rows: ${!ROWS[*]}; efforts: ${!EFF[*]})" >&2; exit 2; }
-
-snap() { echo "=== $1"; tmux capture-pane -p -t $S | grep -v '^\s*$' | tail -"${2:-12}"; }
+NODE_BIN="$(command -v node || echo "$HOME/.local/bin/node")"
+snap() { echo "=== $1"; tmux capture-pane -p -t $S | grep -v '^\s*$' | tail -"${2:-8}"; }
 settings="$HOME/.claude/settings.json"; before="$(stat -c %Y "$settings" 2>/dev/null || echo 0)"
 
 tmux kill-session -t $S 2>/dev/null
 tmux new-session -d -s $S -x 180 -y 45 -c "$CWD" "claude --permission-mode auto --model sonnet --effort medium"
-sleep 12; snap startup 6
-# dismiss any first-run dialog (trust / "teach auto mode") that would eat keystrokes
+sleep 12
+tmux send-keys -t $S Escape; sleep 1     # dismiss any first-run dialog that would eat keystrokes
+tmux send-keys -t $S "Remember the code word PELICAN. Reply with one word: ok." Enter; sleep 20; snap turn-1 5
 tmux send-keys -t $S Escape; sleep 1
-tmux send-keys -t $S "Remember the code word PELICAN. Reply with one word: ok." Enter; sleep 20; snap turn-1 6
-tmux send-keys -t $S Escape; sleep 1
-tmux send-keys -t $S "/model" Enter; sleep 2
-for _ in 1 2 3 4 5 6; do tmux send-keys -t $S Up; sleep 0.15; done
-for ((i = 1; i < row; i++)); do tmux send-keys -t $S Down; sleep 0.15; done
-for _ in 1 2 3 4 5 6; do tmux send-keys -t $S Left; sleep 0.15; done
-for ((i = 0; i < eff; i++)); do tmux send-keys -t $S Right; sleep 0.15; done
-snap "picker (about to press s)" 14
-tmux send-keys -t $S s; sleep 3; snap "after s" 6
-tmux send-keys -t $S "What was the code word? One word." Enter; sleep 25; snap turn-2 6
+
+echo "=== switching to $MODEL / $EFFORT"
+"$NODE_BIN" "$here/tier_switch.mjs" "$S" "$MODEL" "$EFFORT"; rc=$?
+snap "after switch" 6
+
+tmux send-keys -t $S "What was the code word? One word." Enter; sleep 25; snap turn-2 5
 tmux capture-pane -p -t $S -S -80 | grep -E 'with (low|medium|high|xhigh|max) effort' | tail -1
+echo "switch exit code: $rc (0 = verified)"
 echo "expected: $MODEL with $EFFORT effort · transcript kept if PELICAN came back"
 echo "settings.json modified by the test: $([ "$(stat -c %Y "$settings" 2>/dev/null || echo 0)" != "$before" ] && echo YES — the sequence saved a default, fix before enabling tier_switch || echo no)"
 tmux kill-session -t $S
+exit $rc
