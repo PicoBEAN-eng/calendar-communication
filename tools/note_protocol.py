@@ -39,7 +39,7 @@ def list_notes(svc, cfg) -> list[dict]:
     out, page = [], None
     while True:
         resp = svc.events().list(calendarId=cfg["calendar_id"], timeMin=f"{ANCHOR}T00:00:00Z",
-                                 timeMax="2000-01-03T00:00:00Z", singleEvents=True, pageToken=page,
+                                 timeMax="2001-01-01T00:00:00Z", singleEvents=True, pageToken=page,
                                  maxResults=250).execute()
         out += resp.get("items", [])
         page = resp.get("nextPageToken")
@@ -50,13 +50,14 @@ def list_notes(svc, cfg) -> list[dict]:
 def index_body(notes: list[dict]) -> str:
     def summary(ev):
         return ((ev.get("description") or "").strip().splitlines() or ["(no summary)"])[0]
-    rows = {ev["summary"]: summary(ev) for ev in notes if ev.get("summary", "").lower().startswith("note:")
-            and ev["summary"] != INDEX_TITLE}
-    rows[PROTOCOL_TITLE] = PROTOCOL_SUMMARY
+    rows = {ev["summary"]: (summary(ev), ev["start"].get("date", ANCHOR)) for ev in notes
+            if ev.get("summary", "").lower().startswith("note:") and ev["summary"] != INDEX_TITLE}
+    rows[PROTOCOL_TITLE] = (PROTOCOL_SUMMARY, ANCHOR)
     ordered = [PROTOCOL_TITLE] + sorted(t for t in rows if t != PROTOCOL_TITLE)
-    lines = [f"Index of context notes on the Woolly calendar ({len(ordered)} notes). "
-             "Load one by searching its exact title on 1 Jan 2000.", ""]
-    lines += [f"- {t} — {rows[t]}" for t in ordered]
+    lines = [f"Index of context notes on the Woolly calendar ({len(ordered)} notes, year 2000). "
+             "Load one by searching its exact title with the day pinned to the date shown. "
+             "Once the library exists, a reader scans days one and two (1–2 Jan 2000) only.", ""]
+    lines += [f"- {t} — {rows[t][0]}" + ("" if rows[t][1] == ANCHOR else f" ({rows[t][1]})") for t in ordered]
     lines += ["", f"Updated {date.today().isoformat()}"]
     return "\n".join(lines)
 
