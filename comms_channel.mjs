@@ -162,9 +162,12 @@ async function deliver(item) {
   if (req.undelivered_reply) lines.push("", "Your previous reply was NOT delivered (the phone overwrote the slot first); fold it into this answer:", req.undelivered_reply.trim());
   if (req.description && req.description.trim()) lines.push("", req.description.trim());
   lines.push("", `Reply with comms_reply(event_id="${req.event_id}", status="done"|"question"|"progress", text=...).`);
-  const meta = { event_id: req.event_id, kind: req.kind || "request", stream: req.stream || STREAM, turn: req.turn || 1, tier: req.tier || "medium" };
-  if (req.reply_to) meta.reply_to = req.reply_to;
-  if (req.thread_file) meta.thread_file = req.thread_file;
+  // Claude Code validates channel meta as string→string: a numeric turn is rejected with
+  // "meta.turn: expected string, received number" and the STDIO connection is dropped
+  // (first production turn, 2026-09-09 13:23) — every value goes through String().
+  const meta = { event_id: String(req.event_id), kind: String(req.kind || "request"), stream: String(req.stream || STREAM), turn: String(req.turn || 1), tier: String(req.tier || "medium") };
+  if (req.reply_to) meta.reply_to = String(req.reply_to);
+  if (req.thread_file) meta.thread_file = String(req.thread_file);
   await switchTier(req.tier || "medium");
   await mcp.notification({ method: "notifications/claude/channel", params: { content: lines.join("\n"), meta } });
   fs.renameSync(path.join(INBOX, file), path.join(DELIVERED, file));
