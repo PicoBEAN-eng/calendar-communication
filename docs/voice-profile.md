@@ -1,5 +1,10 @@
 # Voice-side profile instruction (paste into the Claude app profile / project instructions)
 
+Also published on the Woolly calendar as `Note: Woolly relay instructions` (1 Jan 2000) by
+`tools/note_protocol.py --apply`, which rebuilds `Note: Index` too — re-run after editing the block
+below. A voice session that has lost its profile can be pointed at that event: "read the event
+\"Note: Woolly relay instructions\" on 1 Jan 2000 on the Woolly calendar and follow it".
+
 The phone half of the contract. Written 2026-09-08 alongside the whiteboard build; keep the two in step.
 
 ```
