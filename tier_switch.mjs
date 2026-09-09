@@ -81,14 +81,16 @@ export async function switchTier(target, model, effort, log = () => {}) {
     return { ok: false, reason: "could not land on the model row" };
   }
   // Effort: step one at a time, verifying the label after each key (the ladder may not wrap).
-  for (let i = 0; i < 10 && p.effort !== effort; i++) {
+  // Some rows (Haiku) show no effort control at all: nothing to set, confirm as is.
+  if (p.effort == null) log(`picker shows no effort control for ${model}; model only`);
+  for (let i = 0; i < 10 && p.effort != null && p.effort !== effort; i++) {
     const ci = EFFORT_LADDER.indexOf(p.effort), wi = EFFORT_LADDER.indexOf(effort);
     if (ci < 0) break;
     await key(target, wi > ci ? "Right" : "Left");
     await sleep(300);
     p = parsePicker(pane(target));
   }
-  if (p.effort !== effort) {
+  if (p.effort != null && p.effort !== effort) {
     await key(target, "Escape");
     return { ok: false, reason: `effort stuck at ${p.effort}` };
   }
@@ -101,7 +103,7 @@ export async function switchTier(target, model, effort, log = () => {}) {
     after = pane(target);
   }
   const line = after.split("\n").reverse().find((l) => /Set model to|Kept model|Set effort/.test(l));
-  const ok = !!line && /session only|Kept model/.test(line);
+  const ok = !!line && /session only/.test(line);
   log(`tier switch → ${model}/${effort}: ${(line || "no confirmation line").trim()}`);
   return { ok, reason: line ? line.trim() : "no confirmation line" };
 }
