@@ -33,7 +33,7 @@ const TMUX = process.env.COMMS_TMUX || "";
 const TIER_SWITCH = process.env.COMMS_TIER_SWITCH || "off";
 const TURN_TIMEOUT_MS = Number(process.env.COMMS_TURN_TIMEOUT_MS || 45 * 60 * 1000);
 const TIER_ORDER = JSON.parse(process.env.COMMS_TIER_ORDER || '["low","medium","high"]');
-const TIERS = JSON.parse(process.env.COMMS_TIERS || '{"low":{"model":"haiku","effort":"low"},"medium":{"model":"sonnet","effort":"medium"},"high":{"model":"opus","effort":"high"}}');
+const TIERS = JSON.parse(process.env.COMMS_TIERS || '{"low":{"model":"sonnet","effort":"low"},"medium":{"model":"sonnet","effort":"medium"},"high":{"model":"opus","effort":"high"}}');
 for (const d of [INBOX, DELIVERED, OUTBOX]) fs.mkdirSync(d, { recursive: true });
 
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), "[comms]", ...a);

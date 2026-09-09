@@ -33,6 +33,6 @@ turn_timeout_minutes = 45        # a turn with no done/question reply after this
 tier_order = ["low", "medium", "high"]   # queue order (same-as-current tier always first)
 
 [tiers]                          # model = /model picker row name; effort = low|medium|high|xhigh|max
-low    = { model = "haiku",  effort = "low" }
+low    = { model = "sonnet", effort = "low" }     # NOT haiku: auto mode is unavailable on it → session drops to manual (verified 2026-09-09)
 medium = { model = "sonnet", effort = "medium" }
 high   = { model = "opus",   effort = "high" }
