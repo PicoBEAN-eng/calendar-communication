@@ -19,8 +19,8 @@ the per-thread transcript file spool/threads/<root_event_id>.md (both sides appe
 turn), whose path rides in the inbox file so the session reads it before answering.
 Replies are written with an etag conditional patch: on a 412 conflict the event is re-read
 and, if the phone wrote a newer turn, that turn is claimed with the undelivered reply attached.
-A tier word in the title (cheap/heavy/low/high/model names; default Query→low, Design→high)
-is stamped into the inbox file for the channel shim's sequencer.
+An explicit tier word in the title (low/medium/high and synonyms, or a model name) is stamped
+into the inbox file for the channel shim's sequencer; a silent title gets the flat default_tier.
 
 State lives in the event's private extended properties (invisible on the phone) plus a
 small local state file (sync token + processed ids).  The session side talks to us only
@@ -64,7 +64,6 @@ TIER_WORDS = {  # words voice may put in the title → tier; first match wins
     "medium": "medium", "sonnet": "medium",
     "heavy": "high", "deep": "high", "high": "high", "opus": "high", "fable": "high",
 }
-TIER_DEFAULTS = {"query": "low", "design": "high"}  # title kind word → default tier
 
 
 # ----------------------------------------------------------------------------- config
@@ -199,15 +198,12 @@ def base_title(summary: str) -> str:
 
 
 def detect_tier(summary: str, cfg: dict) -> str:
-    """Tier from the title: an explicit tier word anywhere wins, else the kind word
-    (Query → low, Design → high), else cfg default_tier."""
+    """Tier from the title: an explicit tier word anywhere wins, else the flat cfg default_tier.
+    No inference from topic words (user 2026-09-09: the server obeys, it never classifies)."""
     words = re.findall(r"[a-z]+", base_title(summary).lower())
     for w in words:
         if w in TIER_WORDS:
             return TIER_WORDS[w]
-    for w in words:
-        if w in TIER_DEFAULTS:
-            return TIER_DEFAULTS[w]
     return cfg["default_tier"]
 
 

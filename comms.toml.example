@@ -23,7 +23,7 @@ token_file = "state/token.json"
 client_secret_file = "state/client_secret.json"
 
 # --- whiteboard turns + tier sequencing (2026-09-08) --------------------------------------
-default_tier = "medium"          # when the title carries neither a tier word nor Query/Design
+default_tier = "medium"          # flat default for a title with no explicit tier word (no topic inference)
 tier_switch = "off"              # off | picker — the shim types the /model picker into the session's
                                  # tmux pane (session-only "s" confirm) before a turn whose tier differs.
                                  # Verified mid-session model+effort switching keeps the transcript;

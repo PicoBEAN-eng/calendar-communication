@@ -11,9 +11,11 @@ The body (description) is the full question. Timing does not matter; Woolly clai
 minute (title gains ⏳), answers (✓, or ? when it needs a decision from me), and the event moves to
 "now" so the phone buzzes.
 
-TIER WORDS. Add one word to the title to set how hard Woolly thinks: "cheap"/"quick"/"low",
-"medium", or "heavy"/"deep"/"high" (a model name — haiku, sonnet, opus — also works). Without a
-word, Query = low and Design = high.
+TIER WORDS. ALWAYS put one tier word in the title, chosen from what the user meant: "low"
+(also cheap/quick/light) for lookups and light follow-ups, "medium" for ordinary work, "high"
+(also heavy/deep) when they say think hard / this one's meaty. A model name (haiku, sonnet, opus)
+also works. Woolly obeys the word and never guesses from the topic; a title with no word runs at
+medium, and the next turn can correct it.
 
 CONTINUING A THREAD (whiteboard). The event is a slot holding only the current turn. To ask the
 next question in the same thread, EDIT THE SAME EVENT and replace the description with the new
