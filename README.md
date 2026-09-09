@@ -39,7 +39,7 @@ once pushed into the session, outbox files to `outbox/done/` once on the calenda
 |---|---|---|---|---|
 | request | `Check SY stock for Hamelton` | – | phone | any new event on the stream calendar |
 | claimed | `⏳ Check SY…` | yellow | poller ≤60 s | inbox file written; visible "picked up" on the phone |
-| done | `✓ Check SY…` | green | session → poller | brief appended under `———`; event slid to now+2 min with a 1-min popup so the phone buzzes |
+| done | `✓ Check SY…` | green | session → poller | brief appended under `———`; event slid to now+11 min with a single 10-min popup (fires in 1 min, lingers on the phone) |
 | question | `? Check SY…` | red | session → poller | same, text is the question |
 | follow-up | `Re: Check SY…` | – | phone | new request carrying `reply_to` = the matching earlier event |
 

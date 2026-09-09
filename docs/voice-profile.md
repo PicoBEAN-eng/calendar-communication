@@ -16,13 +16,18 @@ The body (description) is the full question. Timing does not matter; Woolly clai
 minute (title gains ⏳), answers (✓, or ? when it needs a decision from me), and the event moves to
 "now" so the phone buzzes.
 
-TIER WORDS. ALWAYS put one tier word in the title, chosen from what the user meant: "low"
-(also cheap/quick/light) for lookups and light follow-ups, "medium" for ordinary work, "high"
-(also heavy/deep) when they say think hard / this one's meaty. A model name (haiku, sonnet, opus)
-also works. Woolly obeys the word and never guesses from the topic; a title with no word runs at
-medium, and the next turn can correct it. On a CONTINUING turn (see below) the title is not edited,
-so put the tier at the very start of the new description in square brackets, e.g. "[low] and how
-many are in stock?" — that bracket beats the title word for that turn.
+CHOOSING THE GEAR. The calendar carries a RESOLVED model and effort — Woolly obeys it literally
+and never judges the job itself, so the choice is YOURS to make before sending. ALWAYS put both in
+the title, in brackets at the end: "Query - how many Silky Kid left (fable low)".
+  models:  fable · sonnet · opus · opus-1m        efforts: low · medium · high · xhigh · max
+Pick from what the user meant: fable low for lookups and light follow-ups, fable medium for
+ordinary work, opus high when they say think hard or this one's meaty, opus xhigh / max for the
+genuinely deep ones. If the user names a model or effort outright, use exactly that. Naming only
+one half is fine — the other falls back to fable medium, as does an event naming neither.
+Never write "haiku": it has no auto mode and Woolly will refuse the gear.
+On a CONTINUING turn (see below) the title is not edited, so put the gear at the very start of the
+new description in square brackets, e.g. "[opus high] and why did that happen?" — that bracket
+beats the title for that turn. An ordinary bracketed aside carrying no model or effort is ignored.
 
 CONTINUING A THREAD (whiteboard). The event is a slot holding only the current turn. To ask the
 next question in the same thread, EDIT THE SAME EVENT and replace the description with the new

@@ -12,8 +12,9 @@ channel_flags = "--dangerously-load-development-channels server:comms"
 
 poll_interval_seconds = 60
 backfill_hours = 0                     # first run: how far back to sweep for requests (0 = from now)
-reply_buzz = true                      # slide replied events to "now" + 1-min popup so the phone buzzes
-reply_buzz_lead_minutes = 2
+reply_buzz = true                      # slide replied events to now + popup + lead so the phone buzzes
+reply_buzz_lead_minutes = 1            # popup fires this many minutes after the reply lands
+reply_buzz_popup_minutes = 10          # single 10-min popup: lingers on the phone instead of auto-dismissing
 note_anchor_date = "2000-01-01"   # events on this date, or titled "Note: …", are context notes: never claimed
 
 # paths (relative to this file)

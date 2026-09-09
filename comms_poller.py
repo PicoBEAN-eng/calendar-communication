@@ -6,8 +6,8 @@ One stream calendar (a secondary calendar on the Gmail account) is the message b
   request   : an event the phone created (no state yet, no title prefix)
   claimed   : we saw it → "⏳ " prefix, yellow, inbox file written for the session
   done      : session replied → "✓ " prefix, green, the description IS the reply (whiteboard
-              slot: one turn at a time), event moved to "now" with a 1-minute popup so the
-              phone buzzes
+              slot: one turn at a time), event slid to now + popup + lead with a single 10-minute
+              popup so the phone buzzes and the notification lingers
   question  : session needs input → "? " prefix, red, same treatment
   progress  : session heartbeat → "⏳ <text> · " in the TITLE only; the description (the
               user's question) is never touched
@@ -19,8 +19,9 @@ the per-thread transcript file spool/threads/<root_event_id>.md (both sides appe
 turn), whose path rides in the inbox file so the session reads it before answering.
 Replies are written with an etag conditional patch: on a 412 conflict the event is re-read
 and, if the phone wrote a newer turn, that turn is claimed with the undelivered reply attached.
-An explicit tier word in the title (low/medium/high and synonyms, or a model name) is stamped
-into the inbox file for the channel shim's sequencer; a silent title gets the flat default_tier.
+The RESOLVED gear the voice side named — a model and an effort, e.g. "opus xhigh" in the title or
+"[opus xhigh]" leading the description — is stamped into the inbox file for the channel shim's
+sequencer; a silent event gets default_model/default_effort. The Nexus never classifies.
 
 State lives in the event's private extended properties (invisible on the phone) plus a
 small local state file (sync token + processed ids).  The session side talks to us only
@@ -59,11 +60,13 @@ PREFIX = {"claimed": "⏳ ", "done": "✓ ", "question": "? "}
 COLOR = {"claimed": "5", "done": "10", "question": "11"}  # Banana / Basil / Tomato
 PROGRESS_PREFIX = "⏳ "
 PROGRESS_SEP = " · "
-TIER_WORDS = {  # words voice may put in the title → tier; first match wins
-    "cheap": "low", "light": "low", "low": "low", "quick": "low", "haiku": "low",
-    "medium": "medium", "sonnet": "medium",
-    "heavy": "high", "deep": "high", "high": "high", "opus": "high", "fable": "high",
-}
+# RESOLVED-GEAR CONTRACT (2026-09-09): the calendar carries a model and an effort outright,
+# never a tier word and never a job description the Nexus has to judge. Classification happens
+# on the voice side (typed, or mapped from shorthand by a context note) BEFORE the event is sent.
+# Nothing here interprets: only literal model/effort values are recognised, and the spelling
+# table normalises how voice transcribes a value — it never turns a topic into a choice.
+MODELS = {"default", "opus-1m", "fable", "sonnet", "haiku", "opus"}
+EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 
 # ----------------------------------------------------------------------------- config
@@ -76,9 +79,11 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("poll_interval_seconds", 60)
     cfg.setdefault("backfill_hours", 0)
     cfg.setdefault("reply_buzz", True)
-    cfg.setdefault("reply_buzz_lead_minutes", 2)
+    cfg.setdefault("reply_buzz_lead_minutes", 1)
+    cfg.setdefault("reply_buzz_popup_minutes", 10)
     cfg.setdefault("note_anchor_date", "2000-01-01")
-    cfg.setdefault("default_tier", "medium")
+    cfg.setdefault("default_model", "fable")
+    cfg.setdefault("default_effort", "medium")
     for key, default in {
         "spool_dir": "spool",
         "state_file": "state/poller_state.json",
@@ -197,21 +202,31 @@ def base_title(summary: str) -> str:
     return strip_prefix(strip_progress(summary or ""))
 
 
-DESC_TIER = re.compile(r"^\s*\[\s*([a-z]+)\s*\]", re.IGNORECASE)
+DESC_GEAR = re.compile(r"^\s*\[([^\]]{0,40})\]")
 
 
-def detect_tier(summary: str, cfg: dict, description: str = "") -> str:
-    """Explicit tier only, never inferred from topic (user 2026-09-09: the server obeys, it
-    never classifies). A leading "[low]"/"[high]" in the description wins (per-turn: a whiteboard
-    turn edits only the description), else a tier word anywhere in the title, else default_tier."""
-    m = DESC_TIER.match(description or "")
-    if m and m.group(1).lower() in TIER_WORDS:
-        return TIER_WORDS[m.group(1).lower()]
-    words = re.findall(r"[a-z]+", base_title(summary).lower())
-    for w in words:
-        if w in TIER_WORDS:
-            return TIER_WORDS[w]
-    return cfg["default_tier"]
+def normalise_gear_text(text: str) -> str:
+    """Fold the spellings voice produces onto the picker's own words. Spelling only."""
+    t = (text or "").lower()
+    t = re.sub(r"\b(?:extra|x)[\s-]*high\b", "xhigh", t)
+    t = re.sub(r"\bopus[\s-]*1\s*m\b", "opus-1m", t)
+    t = re.sub(r"\bmaximum\b", "max", t)
+    return t
+
+
+def detect_gear(summary: str, cfg: dict, description: str = "") -> tuple[str, str]:
+    """The resolved gear the voice side asked for: (model, effort). A leading "[opus xhigh]" in
+    the description wins (per-turn: a whiteboard turn edits only the description), else the title.
+    Either half may be omitted and falls back to the configured default; a bracket carrying no
+    gear at all (an ordinary "[…]" aside) defers to the title. Never inferred from the topic."""
+    m = DESC_GEAR.match(description or "")
+    for source in ([m.group(1)] if m else []) + [base_title(summary)]:
+        words = re.findall(r"[a-z0-9-]+", normalise_gear_text(source))
+        model = next((w for w in words if w in MODELS), None)
+        effort = next((w for w in words if w in EFFORTS), None)
+        if model or effort:
+            return model or cfg["default_model"], effort or cfg["default_effort"]
+    return cfg["default_model"], cfg["default_effort"]
 
 
 def thread_root(state: dict, event_id: str) -> str:
@@ -302,10 +317,10 @@ def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
     turn = (rec.get("turn", 1) + 1) if rec else 1
     reply_to = rec.get("reply_to") if rec else find_reply_target(state, summary)
     description = (ev.get("description") or "").strip()
-    tier = detect_tier(summary, cfg, description)
+    model, effort = detect_gear(summary, cfg, description)
     if dry_run:
         what = f"new turn {turn} on" if rec else "claim"
-        log(f"[dry-run] would {what} {eid}: {summary!r} tier={tier}" + (f" (re: {reply_to})" if reply_to else ""))
+        log(f"[dry-run] would {what} {eid}: {summary!r} gear={model}/{effort}" + (f" (re: {reply_to})" if reply_to else ""))
         return
     claimed_at = now_iso(cfg["timezone"])
     body = {
@@ -336,7 +351,8 @@ def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
         "kind": "followup" if reply_to else ("turn" if turn > 1 else "request"),
         "reply_to": reply_to,
         "turn": turn,
-        "tier": tier,
+        "model": model,
+        "effort": effort,
         "thread_file": str(thread_path(cfg, root)),
         "thread_root": root,
         "summary": summary,
@@ -353,7 +369,7 @@ def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
     tmp = inbox / f".{eid}.json.tmp"
     tmp.write_text(json.dumps(req, indent=1, ensure_ascii=False))
     tmp.replace(inbox / f"{eid}.json")  # atomic appear
-    log(f"claimed {eid} turn {turn} tier {tier}: {summary!r}" + (f" (re: {reply_to})" if reply_to else ""))
+    log(f"claimed {eid} turn {turn} gear {model}/{effort}: {summary!r}" + (f" (re: {reply_to})" if reply_to else ""))
 
 
 def is_new_turn(state: dict, ev: dict) -> bool:
@@ -405,14 +421,16 @@ def apply_reply(svc, cfg: dict, state: dict, event_id: str, status: str, text: s
                                            "comms_turn": str(turn)}},
     }
     if cfg["reply_buzz"]:
-        # Reminders only fire ahead of the start, so slide the event to "now" and set a
-        # 1-minute popup: the phone buzzes with the title (which now carries ✓ or ?).
+        # Reminders only fire ahead of the start, so slide the event to now + popup + lead:
+        # the popup fires in `lead` minutes and the phone shows the title (now carrying ✓ or ?)
+        # as a `popup`-minute reminder, which lingers instead of auto-dismissing.
         tz = ZoneInfo(cfg["timezone"])
-        start = datetime.now(tz) + timedelta(minutes=int(cfg["reply_buzz_lead_minutes"]))
+        popup = int(cfg["reply_buzz_popup_minutes"])
+        start = datetime.now(tz) + timedelta(minutes=popup + int(cfg["reply_buzz_lead_minutes"]))
         end = start + timedelta(minutes=15)
         body["start"] = {"dateTime": start.isoformat(timespec="seconds"), "timeZone": cfg["timezone"], "date": None}
         body["end"] = {"dateTime": end.isoformat(timespec="seconds"), "timeZone": cfg["timezone"], "date": None}
-        body["reminders"] = {"useDefault": False, "overrides": [{"method": "popup", "minutes": 1}]}
+        body["reminders"] = {"useDefault": False, "overrides": [{"method": "popup", "minutes": popup}]}
     req = svc.events().patch(calendarId=cal, eventId=event_id, body=body)
     req.headers["If-Match"] = ev["etag"]  # conditional write: never clobber a newer turn
     try:

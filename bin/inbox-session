@@ -42,8 +42,11 @@ env = {"COMMS_SPOOL": f"{here}/spool", "COMMS_STREAM": stream,
        "COMMS_TMUX": tmux_name,
        "COMMS_TIER_SWITCH": str(cfg.get("tier_switch", "off")),
        "COMMS_TURN_TIMEOUT_MS": str(int(cfg.get("turn_timeout_minutes", 45)) * 60_000),
-       "COMMS_TIER_ORDER": json.dumps(cfg.get("tier_order", ["low", "medium", "high"])),
-       "COMMS_TIERS": json.dumps(cfg.get("tiers", {}))}
+       "COMMS_EFFORT_ORDER": json.dumps(cfg.get("effort_order", ["low", "medium", "high", "xhigh", "max"])),
+       # Only the fallback gear crosses the launch boundary now; the real gear rides each inbox
+       # file, so remapping on the voice side never needs a restart.
+       "COMMS_DEFAULT_MODEL": str(cfg.get("default_model", "fable")),
+       "COMMS_DEFAULT_EFFORT": str(cfg.get("default_effort", "medium"))}
 json.dump({"mcpServers": {"comms": {"command": node, "args": [f"{here}/comms_channel.mjs"], "env": env}}},
           open(out, "w"), indent=1)
 EOF

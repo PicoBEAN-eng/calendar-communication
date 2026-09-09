@@ -4,7 +4,7 @@
 // An MCP "channel" server: Claude Code starts it with the session.  Since 2026-09-08 it is
 // also the SEQUENCER: it holds pending spool/inbox/<event_id>.json requests, admits exactly
 // ONE turn into the session at a time, and (optionally) switches the session's model/effort
-// tier in the tmux pane before delivering a turn whose tier differs from the current one.
+// gear in the tmux pane before delivering a turn whose model+effort differ from the current one.
 // It exposes one tool, comms_reply, which writes spool/outbox/<event_id>.json for the poller;
 // a done|question reply for the in-flight event ends the turn and admits the next one
 // (progress replies do not).  A shim restart = the previous turn ended (nothing can wedge).
@@ -13,8 +13,8 @@
 // Env (set by bin/inbox-session from comms.toml):
 //   COMMS_SPOOL            spool dir                      COMMS_STREAM        stream name
 //   COMMS_TMUX             tmux target of the session     COMMS_TIER_SWITCH   off | picker
-//   COMMS_TIERS            JSON {tier: {model, effort}}   COMMS_TURN_TIMEOUT_MS  (default 45 min)
-//   COMMS_TIER_ORDER       JSON ["low","medium","high"] (queue sort order; same-as-current first)
+//   COMMS_DEFAULT_MODEL / COMMS_DEFAULT_EFFORT   gear for an event that named neither
+//   COMMS_TURN_TIMEOUT_MS  (default 45 min)      COMMS_EFFORT_ORDER  queue sort (lightest first)
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -32,8 +32,11 @@ const STREAM = process.env.COMMS_STREAM || path.basename(path.dirname(SPOOL));
 const TMUX = process.env.COMMS_TMUX || "";
 const TIER_SWITCH = process.env.COMMS_TIER_SWITCH || "off";
 const TURN_TIMEOUT_MS = Number(process.env.COMMS_TURN_TIMEOUT_MS || 45 * 60 * 1000);
-const TIER_ORDER = JSON.parse(process.env.COMMS_TIER_ORDER || '["low","medium","high"]');
-const TIERS = JSON.parse(process.env.COMMS_TIERS || '{"low":{"model":"sonnet","effort":"low"},"medium":{"model":"sonnet","effort":"medium"},"high":{"model":"opus","effort":"high"}}');
+// Resolved-gear contract (2026-09-09): the inbox file carries the model and effort outright, so
+// there is no mapping table here to go stale — an edit on the voice side is live on the next claim.
+const EFFORT_ORDER = JSON.parse(process.env.COMMS_EFFORT_ORDER || '["low","medium","high","xhigh","max"]');
+const DEFAULT_MODEL = process.env.COMMS_DEFAULT_MODEL || "fable";
+const DEFAULT_EFFORT = process.env.COMMS_DEFAULT_EFFORT || "medium";
 for (const d of [INBOX, DELIVERED, OUTBOX]) fs.mkdirSync(d, { recursive: true });
 
 const log = (...a) => console.error(new Date().toISOString().slice(11, 19), "[comms]", ...a);
@@ -85,7 +88,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 // ---- sequencer state ---------------------------------------------------------------
 let inflight = null; // { event_id, turn, since } — a shim restart clears it by construction
-let currentTier = null; // unknown until the first switch (or reported by the launcher)
+let currentModel = null, currentEffort = null; // unknown until the first switch
 let admitting = false;
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -112,16 +115,21 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 // ---- tier switching (tmux) --------------------------------------------------------------
 // The picker driving lives in tier_switch.mjs (shared with bin/tier-switch-test): parse-and-verify
 // /model picker, session-only "s" confirm, answers the "Switch model?" dialog.
-async function switchTier(tier) {
-  const spec = TIERS[tier];
-  if (!spec || TIER_SWITCH === "off" || !TMUX) return;
-  if (tier === currentTier) return; // already in this gear: no keystrokes, no cache miss
+async function switchGear(model, effort) {
+  if (TIER_SWITCH === "off" || !TMUX) return;
+  // Safety floor, not a classification: haiku has no auto mode, so switching to it drops the
+  // session to manual and wedges the relay — which only a physical restart clears.
+  if (model === "haiku") {
+    log(`refusing gear haiku/${effort}: haiku has no auto mode; staying on ${currentModel || "the launch gear"}`);
+    return;
+  }
+  if (model === currentModel && effort === currentEffort) return; // already in this gear: no keystrokes
   try {
-    const r = await driveSwitch(TMUX, spec.model, spec.effort, log);
-    if (r.ok) currentTier = tier;
-    else log(`tier switch → ${tier} NOT verified (${r.reason}); delivering under the current gear`);
+    const r = await driveSwitch(TMUX, model, effort, log);
+    if (r.ok) { currentModel = model; currentEffort = effort; }
+    else log(`gear switch → ${model}/${effort} NOT verified (${r.reason}); delivering under the current gear`);
   } catch (e) {
-    log("tier switch failed:", e.message);
+    log("gear switch failed:", e.message);
   }
 }
 
@@ -145,17 +153,18 @@ function readPending() {
   return out;
 }
 function rank(item) {
-  const t = item.req.tier || "medium";
-  const same = currentTier && t === currentTier ? 0 : 1; // batch same-tier turns: no switch needed
-  const idx = TIER_ORDER.indexOf(t);
+  const m = item.req.model || DEFAULT_MODEL, e = item.req.effort || DEFAULT_EFFORT;
+  const same = currentModel && m === currentModel && e === currentEffort ? 0 : 1; // batch same-gear turns
+  const idx = EFFORT_ORDER.indexOf(e); // lighter work first, by the effort the voice side declared
   return [same, idx < 0 ? 99 : idx, item.req.claimed_at || "", item.file];
 }
 async function deliver(item) {
   const { file, req } = item;
+  const model = req.model || DEFAULT_MODEL, effort = req.effort || DEFAULT_EFFORT;
   const lines = [
     `Comms ${req.kind || "request"} from the ${req.stream || STREAM} calendar (event_id: ${req.event_id})`,
     `Title: ${req.summary}`,
-    `Turn: ${req.turn || 1} · tier: ${req.tier || "medium"}`,
+    `Turn: ${req.turn || 1} · gear: ${model} ${effort}`,
   ];
   if (req.reply_to) lines.push(`Follow-up to event_id: ${req.reply_to}`);
   if (req.thread_file) lines.push(`Thread file (read it first if turn > 1): ${req.thread_file}`);
@@ -165,14 +174,14 @@ async function deliver(item) {
   // Claude Code validates channel meta as string→string: a numeric turn is rejected with
   // "meta.turn: expected string, received number" and the STDIO connection is dropped
   // (first production turn, 2026-09-09 13:23) — every value goes through String().
-  const meta = { event_id: String(req.event_id), kind: String(req.kind || "request"), stream: String(req.stream || STREAM), turn: String(req.turn || 1), tier: String(req.tier || "medium") };
+  const meta = { event_id: String(req.event_id), kind: String(req.kind || "request"), stream: String(req.stream || STREAM), turn: String(req.turn || 1), model: String(model), effort: String(effort) };
   if (req.reply_to) meta.reply_to = String(req.reply_to);
   if (req.thread_file) meta.thread_file = String(req.thread_file);
-  await switchTier(req.tier || "medium");
+  await switchGear(model, effort);
   await mcp.notification({ method: "notifications/claude/channel", params: { content: lines.join("\n"), meta } });
   fs.renameSync(path.join(INBOX, file), path.join(DELIVERED, file));
   inflight = { event_id: req.event_id, turn: req.turn || 1, since: Date.now() };
-  log("delivered", file, `turn ${meta.turn} tier ${meta.tier}`);
+  log("delivered", file, `turn ${meta.turn} gear ${meta.model}/${meta.effort}`);
 }
 async function admit() {
   if (admitting) return;
