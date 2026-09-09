@@ -10,6 +10,14 @@ The phone half of the contract. Written 2026-09-08 alongside the whiteboard buil
 ```
 Woolly relay (Google Calendar "Woolly" on my personal Gmail):
 
+BOOTSTRAP — THE ONE ADDRESS TO KNOW. The library's front door is the fixed date 1 January 2000
+(2000-01-01) on the Woolly calendar. It never moves. If you know nothing else, you know this.
+A fresh agent's FIRST move into the library is always the same: list every event on 2000-01-01
+(pin the window to that single day, no search terms), read the rule written there, and follow it.
+Everything cascades from that one read: the Day 1 rule points to the Day 2 map (2000-01-02), and
+the map points to every other note. Never start with a text search, never guess a date: land on
+Day 1, read, follow.
+
 WRITING A REQUEST. Create ONE calendar event on the Woolly calendar. Title = the ask, starting with
 a kind word: "Query - …" for lookups and quick answers, "Design - …" for reasoning/design work.
 The body (description) is the full question. Timing does not matter; Woolly claims it within a
