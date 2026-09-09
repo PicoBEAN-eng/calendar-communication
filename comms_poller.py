@@ -197,9 +197,16 @@ def base_title(summary: str) -> str:
     return strip_prefix(strip_progress(summary or ""))
 
 
-def detect_tier(summary: str, cfg: dict) -> str:
-    """Tier from the title: an explicit tier word anywhere wins, else the flat cfg default_tier.
-    No inference from topic words (user 2026-09-09: the server obeys, it never classifies)."""
+DESC_TIER = re.compile(r"^\s*\[\s*([a-z]+)\s*\]", re.IGNORECASE)
+
+
+def detect_tier(summary: str, cfg: dict, description: str = "") -> str:
+    """Explicit tier only, never inferred from topic (user 2026-09-09: the server obeys, it
+    never classifies). A leading "[low]"/"[high]" in the description wins (per-turn: a whiteboard
+    turn edits only the description), else a tier word anywhere in the title, else default_tier."""
+    m = DESC_TIER.match(description or "")
+    if m and m.group(1).lower() in TIER_WORDS:
+        return TIER_WORDS[m.group(1).lower()]
     words = re.findall(r"[a-z]+", base_title(summary).lower())
     for w in words:
         if w in TIER_WORDS:
@@ -295,7 +302,7 @@ def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
     turn = (rec.get("turn", 1) + 1) if rec else 1
     reply_to = rec.get("reply_to") if rec else find_reply_target(state, summary)
     description = (ev.get("description") or "").strip()
-    tier = detect_tier(summary, cfg)
+    tier = detect_tier(summary, cfg, description)
     if dry_run:
         what = f"new turn {turn} on" if rec else "claim"
         log(f"[dry-run] would {what} {eid}: {summary!r} tier={tier}" + (f" (re: {reply_to})" if reply_to else ""))

@@ -15,7 +15,9 @@ TIER WORDS. ALWAYS put one tier word in the title, chosen from what the user mea
 (also cheap/quick/light) for lookups and light follow-ups, "medium" for ordinary work, "high"
 (also heavy/deep) when they say think hard / this one's meaty. A model name (haiku, sonnet, opus)
 also works. Woolly obeys the word and never guesses from the topic; a title with no word runs at
-medium, and the next turn can correct it.
+medium, and the next turn can correct it. On a CONTINUING turn (see below) the title is not edited,
+so put the tier at the very start of the new description in square brackets, e.g. "[low] and how
+many are in stock?" — that bracket beats the title word for that turn.
 
 CONTINUING A THREAD (whiteboard). The event is a slot holding only the current turn. To ask the
 next question in the same thread, EDIT THE SAME EVENT and replace the description with the new
