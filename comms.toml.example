@@ -1,39 +1,36 @@
-# calendar-communication — one file per container. Copy to comms.toml and fill in.
-stream = "Woolly"                      # name shown in replies / channel meta
-calendar_id = "xxxx@group.calendar.google.com"   # from: comms_poller.py --list-calendars
-timezone = "Australia/Melbourne"
+# calendar-communication — one instance per machine/container. Copy to comms.toml and fill in.
+# Everything that identifies THIS instance lives here; the code is stream-agnostic.
 
-# inbox session (bin/inbox-session)
-session_name = "Woolly inbox"          # the Remote Control name you tap on the phone
-session_cwd = "/home/woollyworkplace/woolly-workplace"
-permission_mode = "auto"               # auto | acceptEdits | default …
-# route 2 (channels) flags; leave empty to run the session without the channel shim (route 3)
+stream = "Studio"                       # the stream's name: calendar name, reply signature, channel meta
+calendar_id = "xxxx@group.calendar.google.com"   # from: comms_poller.py --list-calendars
+timezone = "UTC"                        # IANA zone for reply timestamps and the reply buzz
+
+# --- inbox session (bin/inbox-session) ---------------------------------------------------
+session_name = "Studio inbox"           # the Remote Control name you tap in the Claude app
+session_cwd = "/home/me/studio-project" # the project the session works in (already trusted by claude)
+permission_mode = "auto"                # auto | acceptEdits | default … (auto = unattended work)
+# The channel shim is loaded with the research-preview flag; leave as is unless Anthropic
+# approves a plugin form of this channel (then e.g. "--channels plugin:comms@…").
 channel_flags = "--dangerously-load-development-channels server:comms"
 
-poll_interval_seconds = 60
-backfill_hours = 0                     # first run: how far back to sweep for requests (0 = from now)
-reply_buzz = true                      # slide replied events to now + popup + lead so the phone buzzes
-reply_buzz_lead_minutes = 1            # popup fires this many minutes after the reply lands
-reply_buzz_popup_minutes = 10          # single 10-min popup: lingers on the phone instead of auto-dismissing
-note_anchor_date = "2000-01-01"   # events on this date, or titled "Note: …", are context notes: never claimed
+# --- replies -----------------------------------------------------------------------------
+reply_buzz = true                       # slide a replied event to "now" with a popup so the phone buzzes
+reply_buzz_lead_minutes = 1             # the popup fires this many minutes after the reply lands
+reply_buzz_popup_minutes = 10           # one popup of this length (lingers instead of auto-dismissing)
+note_anchor_date = "2000-01-01"         # events on this date, or titled "Note: …", are context notes: never claimed
+backfill_hours = 0                      # very first poll only: how far back to look for requests (0 = from now)
 
-# paths (relative to this file)
+# --- gear (model + effort) and the sequencer ---------------------------------------------
+default_model = "default"               # gear for an event that names neither half: /model picker row name
+default_effort = "medium"               #   default | opus-1m | fable | sonnet | opus  ×  low | medium | high | xhigh | max
+gear_switch = "off"                     # off | picker — the shim drives the /model picker in the session's tmux
+                                        # pane before a turn whose gear differs (session-only confirm).
+                                        # Run bin/gear-switch-test on this machine before turning it on.
+turn_timeout_minutes = 45               # a turn with no done/question reply after this admits the next
+effort_order = ["low", "medium", "high", "xhigh", "max"]   # queue order (same-as-current gear first)
+
+# --- paths (relative to this file) --------------------------------------------------------
 spool_dir = "spool"
 state_file = "state/poller_state.json"
 token_file = "state/token.json"
 client_secret_file = "state/client_secret.json"
-
-# --- whiteboard turns + tier sequencing (2026-09-08) --------------------------------------
-default_tier = "medium"          # flat default for a title with no explicit tier word (no topic inference)
-tier_switch = "off"              # off | picker — the shim types the /model picker into the session's
-                                 # tmux pane (session-only "s" confirm) before a turn whose tier differs.
-                                 # Verified mid-session model+effort switching keeps the transcript;
-                                 # the picker keystroke sequence itself still needs its rehearsal run
-                                 # (bin/tier-switch-test) before turning this on.
-turn_timeout_minutes = 45        # a turn with no done/question reply after this admits the next
-tier_order = ["low", "medium", "high"]   # queue order (same-as-current tier always first)
-
-[tiers]                          # model = /model picker row name; effort = low|medium|high|xhigh|max
-low    = { model = "sonnet", effort = "low" }     # NOT haiku: auto mode is unavailable on it → session drops to manual (verified 2026-09-09)
-medium = { model = "sonnet", effort = "medium" }
-high   = { model = "opus",   effort = "high" }

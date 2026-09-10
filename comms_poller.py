@@ -21,13 +21,13 @@ Replies are written with an etag conditional patch: on a 412 conflict the event 
 and, if the phone wrote a newer turn, that turn is claimed with the undelivered reply attached.
 The RESOLVED gear the voice side named — a model and an effort, e.g. "opus xhigh" in the title or
 "[opus xhigh]" leading the description — is stamped into the inbox file for the channel shim's
-sequencer; a silent event gets default_model/default_effort. The Nexus never classifies.
+sequencer; a silent event gets default_model/default_effort. The poller never classifies.
 
 State lives in the event's private extended properties (invisible on the phone) plus a
 small local state file (sync token + processed ids).  The session side talks to us only
 through the spool directory:
 
-  spool/inbox/<event_id>.json    request for the session (channel shim / -p sender picks up)
+  spool/inbox/<event_id>.json    request for the session (the channel shim picks it up)
   spool/outbox/<event_id>.json   reply from the session  {"event_id","status","text"}
 
 Commands
@@ -35,7 +35,6 @@ Commands
   --list-calendars  show calendar ids (to fill comms.toml)
   --once            one poll: pull changes, claim new requests, push pending replies
   --dry-run         with --once: report what would be claimed / detected, write nothing
-  --loop            poll forever (interval from config)
   --reply ID --status done|question|progress --text "…"   hand-written reply (testing)
   --show ID         dump one event
 """
@@ -46,7 +45,6 @@ import json
 import os
 import re
 import sys
-import time
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -56,12 +54,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ]
+CONTRACT = 1  # spool/title/notes contract version — see README "Contracts"
 PREFIX = {"claimed": "⏳ ", "done": "✓ ", "question": "? "}
 COLOR = {"claimed": "5", "done": "10", "question": "11"}  # Banana / Basil / Tomato
 PROGRESS_PREFIX = "⏳ "
 PROGRESS_SEP = " · "
 # RESOLVED-GEAR CONTRACT (2026-09-09): the calendar carries a model and an effort outright,
-# never a tier word and never a job description the Nexus has to judge. Classification happens
+# never a tier word and never a job description the poller has to judge. Classification happens
 # on the voice side (typed, or mapped from shorthand by a context note) BEFORE the event is sent.
 # Nothing here interprets: only literal model/effort values are recognised, and the spelling
 # table normalises how voice transcribes a value — it never turns a topic into a choice.
@@ -75,8 +74,7 @@ def load_config(path: Path) -> dict:
         cfg = tomllib.load(f)
     base = path.parent
     cfg.setdefault("stream", "comms")
-    cfg.setdefault("timezone", "Australia/Melbourne")
-    cfg.setdefault("poll_interval_seconds", 60)
+    cfg.setdefault("timezone", "UTC")
     cfg.setdefault("backfill_hours", 0)
     cfg.setdefault("reply_buzz", True)
     cfg.setdefault("reply_buzz_lead_minutes", 1)
@@ -331,6 +329,7 @@ def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
             "comms_claimed_at": claimed_at,
             "comms_stream": cfg["stream"],
             "comms_turn": str(turn),
+            "comms_contract": str(CONTRACT),
         }},
     }
     svc.events().patch(calendarId=cfg["calendar_id"], eventId=eid, body=body).execute()
@@ -345,6 +344,7 @@ def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
         thread_append(cfg, root, summary, f"Turn {turn - 1} — reply NOT delivered (slot was overwritten) · {claimed_at[:16]}",
                       undelivered_reply)
     req = {
+        "contract": CONTRACT,
         "event_id": eid,
         "calendar_id": cfg["calendar_id"],
         "stream": cfg["stream"],
@@ -503,7 +503,6 @@ def main() -> None:
     g.add_argument("--auth", action="store_true")
     g.add_argument("--list-calendars", action="store_true")
     g.add_argument("--once", action="store_true")
-    g.add_argument("--loop", action="store_true")
     g.add_argument("--reply", metavar="EVENT_ID")
     g.add_argument("--show", metavar="EVENT_ID")
     ap.add_argument("--status", choices=["done", "question", "progress"], default="done")
@@ -529,15 +528,6 @@ def main() -> None:
         save_state(cfg, state)
     elif args.once:
         poll_once(svc, cfg, state, dry_run=args.dry_run)
-    elif args.loop:
-        interval = int(cfg["poll_interval_seconds"])
-        log(f"polling {cfg['calendar_id']} every {interval}s")
-        while True:
-            try:
-                poll_once(svc, cfg, state)
-            except Exception as e:
-                log(f"poll failed: {e}")
-            time.sleep(interval)
 
 
 if __name__ == "__main__":

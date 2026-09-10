@@ -1,0 +1,21 @@
+# ~/.config/systemd/user/comms-inbox.service — the named inbox session (Remote Control + channel shim).
+# One-time prerequisites, done interactively as this user: `claude` login, trust of session_cwd,
+# the Remote Control consent (`claude remote-control` → y). The session lives in tmux session
+# "comms-inbox" (tmux attach -t comms-inbox). Requires `loginctl enable-linger <user>` so user
+# services run without a login session.
+[Unit]
+Description=calendar-communication: inbox Claude Code session (Remote Control + channel shim)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/calendar-communication/bin/inbox-session
+ExecStop=/bin/sh -c 'tmux kill-session -t comms-inbox 2>/dev/null || true'
+Restart=always
+RestartSec=30
+Environment=HOME=%h
+Environment=PATH=%h/.local/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

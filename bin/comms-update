@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Bring this instance up to the shared main: pull, refresh dependencies whose manifest changed,
+# smoke-test the shim, reinstall units if they changed, and say whether the inbox session must
+# restart (only the shim, the gear switcher, the launcher and the units need one — the poller is
+# re-read on every timer tick).      bin/comms-update [--restart]
+# From inside the inbox session: reply to the current request FIRST, then run with --restart —
+# the restart kills the session that runs it (a fresh one comes up under systemd within a minute).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$here"
+before="$(git rev-parse HEAD)"
+git pull --ff-only
+after="$(git rev-parse HEAD)"
+changed="$(git diff --name-only "$before" "$after")"
+[ "$before" = "$after" ] && echo "already up to date ($(git describe --tags --always))" || { echo "updated $before → $after"; echo "$changed" | sed 's/^/  /'; }
+echo "$changed" | grep -q '^package-lock.json$' && { echo "npm ci"; npm ci --silent; }
+echo "$changed" | grep -q '^requirements.txt$' && { echo "pip install"; .venv/bin/pip install -q -r requirements.txt; }
+node test/channel_smoke.mjs >/dev/null 2>&1 && echo "smoke test ok" || { echo "SMOKE TEST FAILED — not restarting anything" >&2; exit 1; }
+echo "$changed" | grep -q '^deploy/' && bin/comms-units install
+if echo "$changed" | grep -qE '^(comms_channel\.mjs|gear_switch\.mjs|bin/inbox-session|deploy/)'; then
+  if [ "${1:-}" = "--restart" ]; then systemctl --user restart comms-inbox.service && echo "inbox session restarted"
+  else echo "inbox session restart needed: bin/comms-update --restart  (or: systemctl --user restart comms-inbox.service)"; fi
+fi

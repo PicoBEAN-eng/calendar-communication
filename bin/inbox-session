@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# The container's inbox session: one named Claude Code session, reachable from the phone
-# via Remote Control, that the comms feeds.  Same shape as woolly-workplace/bin/remote-control
-# (connectivity gate + Restart=always self-heal), run inside a tmux session so that
-#   - the --dangerously-load-development-channels consent dialog (shown at EVERY start,
-#     not persisted — verified 2026-09-08) can be answered automatically, and
+# The container's inbox session: one named Claude Code session, reachable from the phone via
+# Remote Control, fed by the channel shim. Runs inside a tmux session so that
+#   - the --dangerously-load-development-channels consent dialog (shown at EVERY start, never
+#     persisted — Claude Code 2.1.259) can be answered automatically, and
 #   - you can `tmux attach -t comms-inbox` locally to watch or type.
-# The MCP config for the channel shim is generated here from comms.toml; nothing needs
-# registering in ~/.claude.json.
+# The MCP config for the shim is generated here from comms.toml; nothing is registered in
+# ~/.claude.json. Meant to run under deploy/comms-inbox.service (Restart=always): the
+# connectivity gate makes "retry until the network is back" the restart loop's job.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cfg="${COMMS_CONFIG:-$here/comms.toml}"
-[ -f "$cfg" ] || { echo "inbox-session: no $cfg" >&2; exit 1; }
+[ -f "$cfg" ] || { echo "inbox-session: no $cfg (copy comms.toml.example)" >&2; exit 1; }
 
 get() { python3 -c 'import tomllib,sys; print(tomllib.load(open(sys.argv[1],"rb")).get(sys.argv[2], sys.argv[3]))' "$cfg" "$1" "${2:-}"; }
 NAME="$(get session_name "comms inbox")"
 CWD="$(get session_cwd "$HOME")"
 MODE="$(get permission_mode auto)"
 STREAM="$(get stream comms)"
-USE_CHANNEL="$(get channel_flags "")"          # non-empty → route 2 (channel shim)
+CHANNEL_FLAGS="$(get channel_flags "--dangerously-load-development-channels server:comms")"
 TMUX_NAME="${COMMS_TMUX_NAME:-comms-inbox}"
 PROBE_URL="${COMMS_PROBE_URL:-https://api.anthropic.com/}"
 CLAUDE_BIN="${COMMS_CLAUDE_BIN:-$(command -v claude || echo /run/current-system/sw/bin/claude)}"
@@ -29,54 +29,47 @@ if ! curl -sS -o /dev/null --max-time 10 "$PROBE_URL"; then
 fi
 
 mkdir -p "$here/state"
-DEBUG_LOG="$here/state/inbox-debug.log"; : > "$DEBUG_LOG"
-cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE --debug-file \"$DEBUG_LOG\" ${COMMS_EXTRA_FLAGS:-}"
-if [ -n "$USE_CHANNEL" ]; then
-  mcp="$here/state/mcp-config.json"
-  python3 - "$mcp" "$NODE_BIN" "$here" "$STREAM" "$cfg" "$TMUX_NAME" <<'EOF'
+# One debug log per session start; the previous one is kept as .1 for a post-mortem.
+DEBUG_LOG="$here/state/inbox-debug.log"
+[ -f "$DEBUG_LOG" ] && mv -f "$DEBUG_LOG" "$DEBUG_LOG.1"; : > "$DEBUG_LOG"
+
+MCP="$here/state/mcp-config.json"
+python3 - "$MCP" "$NODE_BIN" "$here" "$STREAM" "$cfg" "$TMUX_NAME" <<'PY'
 import json, sys, tomllib
 out, node, here, stream, cfgpath, tmux_name = sys.argv[1:7]
 cfg = tomllib.load(open(cfgpath, "rb"))
 env = {"COMMS_SPOOL": f"{here}/spool", "COMMS_STREAM": stream,
-       # sequencer + tier switching (2026-09-08): the shim types the /model picker into this pane
-       "COMMS_TMUX": tmux_name,
-       "COMMS_TIER_SWITCH": str(cfg.get("tier_switch", "off")),
+       "COMMS_TMUX": tmux_name,                                   # the shim drives the /model picker in this pane
+       "COMMS_GEAR_SWITCH": str(cfg.get("gear_switch", "off")),
        "COMMS_TURN_TIMEOUT_MS": str(int(cfg.get("turn_timeout_minutes", 45)) * 60_000),
        "COMMS_EFFORT_ORDER": json.dumps(cfg.get("effort_order", ["low", "medium", "high", "xhigh", "max"])),
-       # Only the fallback gear crosses the launch boundary now; the real gear rides each inbox
-       # file, so remapping on the voice side never needs a restart.
-       "COMMS_DEFAULT_MODEL": str(cfg.get("default_model", "fable")),
+       "COMMS_DEFAULT_MODEL": str(cfg.get("default_model", "default")),   # fallback gear only; the real gear rides each inbox file
        "COMMS_DEFAULT_EFFORT": str(cfg.get("default_effort", "medium"))}
-json.dump({"mcpServers": {"comms": {"command": node, "args": [f"{here}/comms_channel.mjs"], "env": env}}},
-          open(out, "w"), indent=1)
-EOF
-  cmd="$cmd --mcp-config \"$mcp\" $USE_CHANNEL"
-fi
+json.dump({"mcpServers": {"comms": {"command": node, "args": [f"{here}/comms_channel.mjs"], "env": env}}}, open(out, "w"), indent=1)
+PY
 
+cmd="$CLAUDE_BIN --remote-control --name \"$NAME\" --permission-mode $MODE --debug-file \"$DEBUG_LOG\" --mcp-config \"$MCP\" $CHANNEL_FLAGS ${COMMS_EXTRA_FLAGS:-}"
 tmux kill-session -t "$TMUX_NAME" 2>/dev/null
-echo "inbox-session: starting '$NAME' in $CWD ($MODE)${USE_CHANNEL:+ with channel shim} [tmux:$TMUX_NAME]" >&2
+echo "inbox-session: starting '$NAME' in $CWD ($MODE) [tmux:$TMUX_NAME]" >&2
 tmux new-session -d -s "$TMUX_NAME" -x 200 -y 50 -c "$CWD" "$cmd" || exit 1
 
 # Answer the development-channels consent ("1. I am using this for local development").
-if [ -n "$USE_CHANNEL" ]; then
-  for _ in $(seq 1 40); do
-    if tmux capture-pane -p -t "$TMUX_NAME" 2>/dev/null | grep -q "Loading development channels"; then
-      tmux send-keys -t "$TMUX_NAME" Enter
-      echo "inbox-session: development-channels consent answered" >&2
-      break
-    fi
-    sleep 1
-  done
-  # Verify the shim actually registered (a startup race once left the session without it,
-  # 2026-09-08). No registration → exit 1 and let systemd restart us.
-  for _ in $(seq 1 45); do
-    grep -q 'MCP server "comms": Channel notifications registered' "$DEBUG_LOG" 2>/dev/null && { echo "inbox-session: channel registered" >&2; break; }
-    sleep 1
-  done
-  if ! grep -q 'Channel notifications registered' "$DEBUG_LOG" 2>/dev/null; then
-    echo "inbox-session: channel did NOT register within 45s; stopping for restart" >&2
-    tmux kill-session -t "$TMUX_NAME" 2>/dev/null; exit 1
+for _ in $(seq 1 40); do
+  if tmux capture-pane -p -t "$TMUX_NAME" 2>/dev/null | grep -q "Loading development channels"; then
+    tmux send-keys -t "$TMUX_NAME" Enter
+    echo "inbox-session: development-channels consent answered" >&2
+    break
   fi
+  sleep 1
+done
+# Verify the shim registered (a startup race once left a session without it): no → restart.
+for _ in $(seq 1 45); do
+  grep -q 'MCP server "comms": Channel notifications registered' "$DEBUG_LOG" 2>/dev/null && { echo "inbox-session: channel registered" >&2; break; }
+  sleep 1
+done
+if ! grep -q 'Channel notifications registered' "$DEBUG_LOG" 2>/dev/null; then
+  echo "inbox-session: channel did NOT register within 45s; stopping for restart" >&2
+  tmux kill-session -t "$TMUX_NAME" 2>/dev/null; exit 1
 fi
 
 # Stay in the foreground for systemd; exit (→ Restart=always) when the session ends.

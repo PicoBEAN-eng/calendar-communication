@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// calendar-communication channel shim — the Claude Code side of the comms (route 2: channels).
+// calendar-communication channel shim — the Claude Code side of the relay (a Claude Code channel).
 //
 // An MCP "channel" server: Claude Code starts it with the session.  Since 2026-09-08 it is
 // also the SEQUENCER: it holds pending spool/inbox/<event_id>.json requests, admits exactly
@@ -12,7 +12,7 @@
 //
 // Env (set by bin/inbox-session from comms.toml):
 //   COMMS_SPOOL            spool dir                      COMMS_STREAM        stream name
-//   COMMS_TMUX             tmux target of the session     COMMS_TIER_SWITCH   off | picker
+//   COMMS_TMUX             tmux target of the session     COMMS_GEAR_SWITCH   off | picker
 //   COMMS_DEFAULT_MODEL / COMMS_DEFAULT_EFFORT   gear for an event that named neither
 //   COMMS_TURN_TIMEOUT_MS  (default 45 min)      COMMS_EFFORT_ORDER  queue sort (lightest first)
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -21,7 +21,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { switchTier as driveSwitch } from "./tier_switch.mjs";
+import { driveGearSwitch as driveSwitch } from "./gear_switch.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SPOOL = process.env.COMMS_SPOOL || path.join(here, "spool");
@@ -30,7 +30,9 @@ const DELIVERED = path.join(INBOX, "delivered");
 const OUTBOX = path.join(SPOOL, "outbox");
 const STREAM = process.env.COMMS_STREAM || path.basename(path.dirname(SPOOL));
 const TMUX = process.env.COMMS_TMUX || "";
-const TIER_SWITCH = process.env.COMMS_TIER_SWITCH || "off";
+const GEAR_SWITCH = process.env.COMMS_GEAR_SWITCH || "off";
+// Spool contract version: inbox/outbox JSON shape + title grammar + notes convention (README "Contracts").
+const CONTRACT = 1;
 const TURN_TIMEOUT_MS = Number(process.env.COMMS_TURN_TIMEOUT_MS || 45 * 60 * 1000);
 // Resolved-gear contract (2026-09-09): the inbox file carries the model and effort outright, so
 // there is no mapping table here to go stale — an edit on the voice side is live on the next claim.
@@ -100,7 +102,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const name = status === "progress" ? `${event_id}.progress.${Date.now()}.json` : `${event_id}.json`;
   const out = path.join(OUTBOX, name);
   const tmp = path.join(OUTBOX, `.${name}.tmp`);
-  fs.writeFileSync(tmp, JSON.stringify({ event_id, status, text, replied_at: new Date().toISOString(), stream: STREAM }, null, 1));
+  fs.writeFileSync(tmp, JSON.stringify({ contract: CONTRACT, event_id, status, text, replied_at: new Date().toISOString(), stream: STREAM }, null, 1));
   fs.renameSync(tmp, out);
   log("reply queued", event_id, status);
   let note = "";
@@ -112,11 +114,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   return { content: [{ type: "text", text: `queued ${status} reply for ${event_id}; the poller pushes it to the calendar within its next tick.${note}` }] };
 });
 
-// ---- tier switching (tmux) --------------------------------------------------------------
-// The picker driving lives in tier_switch.mjs (shared with bin/tier-switch-test): parse-and-verify
+// ---- gear switching (tmux) --------------------------------------------------------------
+// The picker driving lives in gear_switch.mjs (shared with bin/gear-switch-test): parse-and-verify
 // /model picker, session-only "s" confirm, answers the "Switch model?" dialog.
 async function switchGear(model, effort) {
-  if (TIER_SWITCH === "off" || !TMUX) return;
+  if (GEAR_SWITCH === "off" || !TMUX) return;
   // Safety floor, not a classification: haiku has no auto mode, so switching to it drops the
   // session to manual and wedges the relay — which only a physical restart clears.
   if (model === "haiku") {
@@ -161,6 +163,7 @@ function rank(item) {
 async function deliver(item) {
   const { file, req } = item;
   const model = req.model || DEFAULT_MODEL, effort = req.effort || DEFAULT_EFFORT;
+  if (req.contract && req.contract !== CONTRACT) log(`inbox file ${file} carries contract ${req.contract}, shim speaks ${CONTRACT} — delivering anyway`);
   const lines = [
     `Comms ${req.kind || "request"} from the ${req.stream || STREAM} calendar (event_id: ${req.event_id})`,
     `Title: ${req.summary}`,
@@ -210,7 +213,7 @@ async function admit() {
 
 const transport = new StdioServerTransport();
 await mcp.connect(transport);
-log("connected; spool =", SPOOL, "| tmux =", TMUX || "(none)", "| tier switch =", TIER_SWITCH);
+log("connected; spool =", SPOOL, "| tmux =", TMUX || "(none)", "| gear switch =", GEAR_SWITCH);
 const STARTUP_DELAY = Number(process.env.COMMS_STARTUP_DELAY_MS || 5000);
 await sleep(STARTUP_DELAY); // let the session finish loading before the first push
 await admit(); // replay anything that arrived while no session was up (restart = previous turn ended)

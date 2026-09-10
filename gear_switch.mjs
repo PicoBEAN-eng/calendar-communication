@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Switch a running Claude Code session's model + effort for THIS SESSION ONLY by driving the
 // /model picker in its tmux pane.  Shared by comms_channel.mjs (the sequencer) and
-// bin/tier-switch-test.  Parse-and-verify, never blind keystrokes: the picker's row list
+// bin/gear-switch-test.  Parse-and-verify, never blind keystrokes: the picker's row list
 // changes with the current model (5 or 6 rows seen on 2.1.259) and wraps at both ends.
 //
-//   node tier_switch.mjs <tmux-target> <model> <effort>     e.g. comms-inbox haiku low
+//   node gear_switch.mjs <tmux-target> <model> <effort>     e.g. comms-inbox haiku low
 //   models: default opus-1m fable sonnet haiku opus   effort: low medium high xhigh max
 // Exit 0 = switched (or already there), 1 = could not verify (the pane is left as found).
 import { spawnSync } from "node:child_process";
@@ -51,7 +51,7 @@ function parsePicker(text) {
   return { rows, effort: e ? e[1].toLowerCase() : null, open: rows.length > 0 && /Select model/.test(text) };
 }
 
-export async function switchTier(target, model, effort, log = () => {}) {
+export async function driveGearSwitch(target, model, effort, log = () => {}) {
   if (!EFFORT_LADDER.includes(effort)) throw new Error(`unknown effort ${effort}`);
   if (!(await waitIdle(target))) return { ok: false, reason: "pane not idle" };
   await key(target, "/model");
@@ -104,17 +104,17 @@ export async function switchTier(target, model, effort, log = () => {}) {
   }
   const line = after.split("\n").reverse().find((l) => /Set model to|Kept model|Set effort/.test(l));
   const ok = !!line && /session only/.test(line);
-  log(`tier switch → ${model}/${effort}: ${(line || "no confirmation line").trim()}`);
+  log(`gear switch → ${model}/${effort}: ${(line || "no confirmation line").trim()}`);
   return { ok, reason: line ? line.trim() : "no confirmation line" };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [target, model, effort] = process.argv.slice(2);
   if (!target || !model || !effort) {
-    console.error("usage: tier_switch.mjs <tmux-target> <model> <effort>");
+    console.error("usage: gear_switch.mjs <tmux-target> <model> <effort>");
     process.exit(2);
   }
-  const r = await switchTier(target, model, effort, (m) => console.error(m));
+  const r = await driveGearSwitch(target, model, effort, (m) => console.error(m));
   console.log(r.ok ? "OK" : "FAILED", r.reason);
   process.exit(r.ok ? 0 : 1);
 }
