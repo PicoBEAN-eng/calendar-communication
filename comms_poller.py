@@ -190,7 +190,7 @@ def is_note(ev: dict, cfg: dict) -> bool:
 
 
 def strip_progress(summary: str) -> str:
-    """'⏳ step 2 of 3 · Query - foo' → 'Query - foo' (a plain claimed prefix is left to strip_prefix)."""
+    """'⏳ step 2 of 3 · foo' → 'foo' (a plain claimed prefix is left to strip_prefix)."""
     if summary.startswith(PROGRESS_PREFIX) and PROGRESS_SEP in summary:
         return summary.split(PROGRESS_SEP, 1)[1]
     return summary

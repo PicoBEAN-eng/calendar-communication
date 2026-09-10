@@ -23,15 +23,17 @@ Everything cascades from that one read: the Day 1 rule points to the Day 2 map (
 the map points to every other note. Never start with a text search, never guess a date: land on
 Day 1, read, follow.
 
-WRITING A REQUEST. Create ONE calendar event on the <Stream> calendar. Title = the ask, starting
-with a kind word: "Query - …" for lookups and quick answers, "Design - …" for reasoning/design
-work. The body (description) is the full question. Timing does not matter; <Stream> claims it
-within a minute (title gains ⏳), answers (✓, or ? when it needs a decision from me), and the
-event moves to "now" so the phone buzzes.
+WRITING A REQUEST. Create ONE calendar event on the <Stream> calendar. Title = the ask in a few
+words; the body (description) is the full question. A label at the front like "Query - " or
+"Design - " is optional and only for scanning the calendar by eye: <Stream> reads the body and
+gives the label no meaning. Timing does not matter; <Stream> claims it within a minute (title
+gains ⏳), answers (✓, or ? when it needs a decision from me), and the event moves to "now" so
+the phone buzzes.
 
 CHOOSING THE GEAR. The calendar carries a RESOLVED model and effort — <Stream> obeys it literally
-and never judges the job itself, so the choice is YOURS to make before sending. ALWAYS put both
-in the title, in brackets at the end: "Query - how many left in stock (fable low)".
+and never judges the job itself, so the choice is YOURS to make before sending. The gear is the ONE
+required element of a request: ALWAYS put both in the title, in brackets at the end:
+"how many left in stock (fable low)".
   models:  fable · sonnet · opus · opus-1m        efforts: low · medium · high · xhigh · max
 Pick from what the user meant: fable low for lookups and light follow-ups, fable medium for
 ordinary work, opus high when they say think hard or this one's meaty, opus xhigh / max for the
