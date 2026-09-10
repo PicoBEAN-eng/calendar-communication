@@ -176,7 +176,9 @@ def now_iso(tz: str) -> str:
     return datetime.now(ZoneInfo(tz)).isoformat(timespec="seconds")
 
 
-NOTE_TITLE = re.compile(r"^\s*note(?:[:\-]|\s)", re.IGNORECASE)
+# "todo" = the operator's own to-do (rolled forward daily by the sweep, never the agent's job);
+# "later" = agent work deferred to its date (the sweep strips the prefix on the day, then it is claimed).
+NOTE_TITLE = re.compile(r"^\s*(?:note|todo|later)(?:[:\-]|\s)", re.IGNORECASE)
 
 
 def is_note(ev: dict, cfg: dict) -> bool:
