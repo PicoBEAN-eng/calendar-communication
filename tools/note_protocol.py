@@ -10,7 +10,7 @@ line), the instructions note first. Dry-run by default; --apply writes.
   tools/note_protocol.py [--config comms.toml] [--apply]
 """
 import argparse, re, sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -49,7 +49,9 @@ def protocol_body(stream: str) -> str:
 
 def list_notes(svc, cfg) -> list[dict]:
     anchor = cfg["note_anchor_date"]
-    year_end = f"{int(anchor[:4]) + 1}-01-01T00:00:00Z"
+    # Days one and two only: the library's chart days (anchor+2 onward) are reached via their own
+    # index notes on day two, so they never appear in Note: Index.
+    year_end = f"{(date.fromisoformat(anchor) + timedelta(days=2)).isoformat()}T00:00:00Z"
     out, page = [], None
     while True:
         resp = svc.events().list(calendarId=cfg["calendar_id"], timeMin=f"{anchor}T00:00:00Z",
@@ -57,7 +59,10 @@ def list_notes(svc, cfg) -> list[dict]:
         out += resp.get("items", [])
         page = resp.get("nextPageToken")
         if not page:
-            return out
+            # timeMax is UTC; an all-day event on day three starts before it in eastern zones,
+            # so filter by the calendar date as well.
+            last = (date.fromisoformat(anchor) + timedelta(days=1)).isoformat()
+            return [ev for ev in out if ev["start"].get("date", ev["start"].get("dateTime", ""))[:10] <= last]
 
 
 def index_body(notes: list[dict], cfg) -> str:
@@ -70,9 +75,9 @@ def index_body(notes: list[dict], cfg) -> str:
             if ev.get("summary", "").lower().startswith("note:") and ev["summary"] != INDEX_TITLE}
     rows[ptitle] = (protocol_summary(stream), anchor)
     ordered = [ptitle] + sorted(t for t in rows if t != ptitle)
-    lines = [f"Index of context notes on the {stream} calendar ({len(ordered)} notes, year {anchor[:4]}). "
+    lines = [f"Index of context notes on the {stream} calendar ({len(ordered)} notes, {anchor} and the day after). "
              "Load one by searching its exact title with the day pinned to the date shown. "
-             "Once the library exists, a reader scans days one and two only.", ""]
+             "Deeper library days are reached through the index notes listed here.", ""]
     lines += [f"- {t} — {rows[t][0]}" + ("" if rows[t][1] == anchor else f" ({rows[t][1]})") for t in ordered]
     lines += ["", f"Updated {date.today().isoformat()}"]
     return "\n".join(lines)
