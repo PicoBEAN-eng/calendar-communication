@@ -29,7 +29,7 @@ def protocol_summary(stream: str) -> str:
             "whiteboard threads, reading replies, context notes. Read this first in a new conversation.")
 
 
-def protocol_body(stream: str) -> str:
+def protocol_body(stream: str, cfg: dict) -> str:
     doc = (HERE / "docs/voice-profile.md").read_text()
     m = re.search(r"```\n(.*?)```", doc, re.S)
     if not m:
@@ -39,6 +39,11 @@ def protocol_body(stream: str) -> str:
     if block.startswith("STREAMS"):
         block = block.split("\n\n", 1)[1]
     block = block.replace("<Stream>'s", f"{stream}'s").replace("<Stream>", stream)
+    # The front door is per stream: substitute this instance's anchor date in every form the block uses.
+    a = date.fromisoformat(cfg["note_anchor_date"])
+    nxt = date.fromordinal(a.toordinal() + 1)
+    block = (block.replace("<AnchorLong>", f"{a.day} {a:%B} {a.year}").replace("<AnchorShort>", f"{a.day} {a:%b} {a.year}")
+                  .replace("<AnchorNext>", nxt.isoformat()).replace("<Anchor>", a.isoformat()))
     body = (f"{protocol_summary(stream)}\n\n"
             f"You are the voice side of the {stream} relay. Follow these instructions for the rest of this conversation.\n\n"
             f"{block}\n\nUpdated {date.today().isoformat()}")
@@ -108,7 +113,7 @@ if __name__ == "__main__":
     svc = cp.get_service(cfg)
     notes = list_notes(svc, cfg)
     existing = {ev.get("summary"): ev["id"] for ev in notes}
-    proto = protocol_body(cfg["stream"])
+    proto = protocol_body(cfg["stream"], cfg)
     upsert(svc, cfg, existing, protocol_title(cfg["stream"]), proto, a.apply)
     upsert(svc, cfg, existing, INDEX_TITLE, index_body(notes, cfg), a.apply)
     if not a.apply:

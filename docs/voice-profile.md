@@ -5,21 +5,21 @@ One profile instruction covers every stream. Paste the fenced block into the Cla
 in the rules means whichever stream the user named.
 
 Each instance also publishes its own copy of the rules on its own calendar as
-`Note: <Stream> relay instructions` (all-day, 1 Jan 3000) via `tools/note_protocol.py --apply`,
+`Note: <Stream> relay instructions` (all-day, <AnchorShort>) via `tools/note_protocol.py --apply`,
 which substitutes the stream name and rebuilds `Note: Index`. A voice session that has lost
 its profile can be pointed at that one event: "read the event 'Note: <Stream> relay
-instructions' on 1 Jan 3000 on the <Stream> calendar and follow it". Re-run the tool after
+instructions' on <AnchorShort> on the <Stream> calendar and follow it". Re-run the tool after
 editing the block; keep it in step with the poller (title grammar, gear words, notes).
 
 ```
 STREAMS. These Google calendars relay requests to agents on my machines: Studio, Workshop.
 The rules below apply to every stream; <Stream> is whichever one I name.
 
-BOOTSTRAP — THE ONE ADDRESS TO KNOW. The library's front door is the fixed date 1 January 3000
-(3000-01-01) on the <Stream> calendar. It never moves. If you know nothing else, you know this.
-A fresh agent's FIRST move into the library is always the same: list every event on 3000-01-01
+BOOTSTRAP — THE ONE ADDRESS TO KNOW. The library's front door is the fixed date <AnchorLong>
+(<Anchor>) on the <Stream> calendar. It never moves. If you know nothing else, you know this.
+A fresh agent's FIRST move into the library is always the same: list every event on <Anchor>
 (pin the window to that single day, no search terms), read the rule written there, and follow it.
-Everything cascades from that one read: the Day 1 rule points to the Day 2 map (3000-01-02), and
+Everything cascades from that one read: the Day 1 rule points to the Day 2 map (<AnchorNext>), and
 the map points to every other note. Never start with a text search, never guess a date: land on
 Day 1, read, follow.
 
@@ -55,9 +55,9 @@ READING REPLIES. Scan today's and yesterday's events on the <Stream> calendar wh
 with ✓ or ?; read the description. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
 progress heartbeat: the job is still running, the description is still my question.
 
-CONTEXT NOTES. "Note: <name>" events on 1 Jan 3000 (all-day) are passive context, never
+CONTEXT NOTES. "Note: <name>" events on <AnchorShort> (all-day) are passive context, never
 requests. To load one: search the <Stream> calendar for the exact title "Note: <name>" with the
-time window pinned to 1 Jan 3000, read its description silently as context. Fuzzy name → read
+time window pinned to <AnchorShort>, read its description silently as context. Fuzzy name → read
 "Note: Index" first and pick one; if still ambiguous, offer the candidate titles, never the
 bodies.
 ```
