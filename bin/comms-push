@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Publish this instance's commits to the shared main: rebase onto origin/main, then push.
+# Every instance may develop, but there is ONE main and no per-instance branches, so the habit is:
+# commit small, run this straight away, never force.                       bin/comms-push
+# Refuses a dirty tree (commit or stash first), a branch other than main, and a rebase conflict
+# (resolve, `git rebase --continue`, run again; `git rebase --abort` backs out). Nothing here can
+# rewrite the remote. The deploy key must have write access (GitHub: "Allow write access" is set
+# at creation — to upgrade a read-only key, delete it and re-add the same public key).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$here"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+[ "$branch" = "main" ] || { echo "on '$branch', not main — fast-forward main to it and push from there" >&2; exit 1; }
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "working tree has uncommitted changes — commit or stash first:" >&2
+  git status --short --untracked-files=no >&2; exit 1
+fi
+git fetch --quiet origin
+ahead="$(git rev-list --count origin/main..HEAD)"
+behind="$(git rev-list --count HEAD..origin/main)"
+if [ "$ahead" -eq 0 ]; then
+  [ "$behind" -eq 0 ] && echo "nothing to push ($(git describe --tags --always) is origin/main)" \
+                      || echo "nothing to push; $behind commit(s) behind — bin/comms-update pulls them"
+  exit 0
+fi
+[ "$behind" -eq 0 ] || echo "rebasing $ahead local commit(s) onto $behind new on origin/main"
+git rebase --quiet origin/main || {
+  echo "REBASE CONFLICT — resolve, git rebase --continue, then bin/comms-push again (git rebase --abort backs out)" >&2
+  exit 1
+}
+git push origin main
+echo "pushed $ahead commit(s): $(git describe --tags --always) → origin/main"

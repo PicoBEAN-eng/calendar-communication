@@ -44,6 +44,7 @@ and on the calendar itself.
 | `bin/comms-reply` | Claude | write an outbox reply by hand (testing) |
 | `bin/comms-units` | ops | install / status / remove the two user units |
 | `bin/comms-update` | ops | pull main, refresh deps if their manifests changed, smoke-test, reinstall units, restart the session if needed |
+| `bin/comms-push` | ops | publish local commits: rebase onto `origin/main`, then push — refuses a dirty tree, never forces |
 | `tools/note_protocol.py` | Google | publish this stream's copy of the phone rules as a context note and rebuild `Note: Index` |
 | `docs/voice-profile.md` | phone | the phone half of the contract: one profile instruction for all streams |
 | `deploy/` | ops | `comms-poller.timer` (every minute) and `comms-inbox.service` (Restart=always) |
@@ -108,8 +109,13 @@ carries `contract, event_id, status (done|question|progress), text`. Files move 
   Poller log: `journalctl --user -u comms-poller.service`. Session debug log:
   `state/inbox-debug.log` (previous start in `.1`).
 - **Update an instance**: `bin/comms-update` (add `--restart` to bounce the session when the
-  shim or launcher changed). Develop on one instance only, on a branch, smoke-test and do a
-  live round trip, merge to `main`, push; every other instance pulls.
+  shim or launcher changed). Every other instance pulls what one instance pushed.
+- **Develop on any instance**, but there is ONE `main` and no per-instance branches: commit
+  small, smoke-test and do a live round trip, then `bin/comms-push` straight away (it rebases
+  onto `origin/main` before pushing and never forces). `comms.toml`, `state/` and `spool/` are
+  git-ignored, so instance identity can never conflict. Each instance's deploy key needs
+  **write access** for this — on GitHub that is the *Allow write access* box when the key is
+  added; a read-only key cannot be upgraded, delete it and re-add the same public key.
 - **Rehearse gear switching** before enabling it: `bin/gear-switch-test opus high`.
 - **A stuck turn** clears itself after `turn_timeout_minutes`; restarting the inbox service
   also ends the in-flight turn (by construction, nothing can wedge).
