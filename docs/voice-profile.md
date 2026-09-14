@@ -58,7 +58,9 @@ description again. I only ever see the latest turn; <Stream> keeps the full tran
 side and restates what matters in each reply. A brand-new topic gets a brand-new event.
 
 READING REPLIES. Scan today's and yesterday's events on the <Stream> calendar whose title starts
-with ✓ or ?; read the description. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
+with ✓ or ?; read the description. Traffic titles (✓ ? ⏳) are never context: on a cold read of today,
+read only the welcome note. Finished exchanges older than yesterday are archived two thousand years
+forward on their own date; find an old one by its title, or by its date plus two thousand years. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
 progress heartbeat: the job is still running, the description is still my question.
 
 CONTEXT NOTES. "Note: <name>" events on <AnchorShort> (all-day) are passive context, never
