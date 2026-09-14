@@ -485,8 +485,11 @@ def poll_once(svc, cfg: dict, state: dict, *, dry_run: bool = False) -> None:
             continue
         if comms_state(ev):
             continue  # claimed/answered by an earlier state file we no longer have: leave it
-        if base_title(ev.get("summary") or "") != (ev.get("summary") or ""):
-            continue  # a prefixed title we somehow don't know: leave it alone
+        if (ev.get("summary") or "").lstrip().startswith(PREFIX["claimed"].strip()):
+            continue  # carries our claimed mark but no state: not ours to touch
+        # Any other prefix on a stateless event (a leading "?" or tick typed by the voice side) is just
+        # the human's own punctuation: claim it; base_title strips it. (2026-09-14: six requests sat
+        # unseen because the voice side began titling questions "? …".)
         claim(svc, cfg, state, ev, dry_run=dry_run)
     if dry_run:
         state["sync_token"] = saved_token  # rehearsal: the next real poll sees the same changes
