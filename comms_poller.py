@@ -76,6 +76,7 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("stream", "comms")
     cfg.setdefault("timezone", "UTC")
     cfg.setdefault("backfill_hours", 0)
+    cfg.setdefault("traffic_offset_years", 0)   # >0: a claimed request moves this many years forward, day-for-day (ADR-0005)
     cfg.setdefault("reply_buzz", True)
     cfg.setdefault("reply_buzz_lead_minutes", 1)
     cfg.setdefault("reply_buzz_popup_minutes", 10)
@@ -334,6 +335,19 @@ def claim(svc, cfg: dict, state: dict, ev: dict, *, dry_run: bool = False,
             "comms_contract": str(CONTRACT),
         }},
     }
+    off = int(cfg.get("traffic_offset_years") or 0)
+    if off and turn == 1:
+        # live traffic lives in the stream's traffic band: same date and time, off years forward
+        st, en = ev.get("start", {}), ev.get("end", {})
+        def _shift(x):
+            return str(int(x[:4]) + off) + x[4:]
+        if "dateTime" in st and int(st["dateTime"][:4]) < 2900:
+            body["start"] = {**st, "dateTime": _shift(st["dateTime"])}
+            body["end"] = {**en, "dateTime": _shift(en["dateTime"])}
+        elif "date" in st and int(st["date"][:4]) < 2900:
+            body["start"] = {"date": _shift(st["date"])}
+            body["end"] = {"date": _shift(en["date"])}
+        body["reminders"] = {"useDefault": False}
     svc.events().patch(calendarId=cfg["calendar_id"], eventId=eid, body=body).execute()
     if rec is None:
         state["processed"][eid] = {"summary": summary, "reply_to": reply_to}

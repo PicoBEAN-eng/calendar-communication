@@ -44,6 +44,10 @@ def protocol_body(stream: str, cfg: dict) -> str:
     nxt = date.fromordinal(a.toordinal() + 1)
     block = (block.replace("<AnchorLong>", f"{a.day} {a:%B} {a.year}").replace("<AnchorShort>", f"{a.day} {a:%b} {a.year}")
                   .replace("<AnchorNext>", nxt.isoformat()).replace("<Anchor>", a.isoformat()))
+    off = int(cfg.get("traffic_offset_years") or 0)
+    band = (f"the same day and time, {off} years forward (today is today plus {off} years there)" if off
+            else "the live dates themselves (today and yesterday)")
+    block = block.replace("<TrafficBand>", band)
     # The block opens with the arrival paragraphs (recall, not briefing); the summary line lives in the Index row only.
     body = f"{block}\n\nUpdated {date.today().isoformat()}"
     if len(body) > 8000:

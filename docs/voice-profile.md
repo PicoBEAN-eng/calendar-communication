@@ -59,10 +59,11 @@ question in ONE edit (never wipe first and write later). <Stream>'s reply replac
 description again. I only ever see the latest turn; <Stream> keeps the full transcript on its
 side and restates what matters in each reply. A brand-new topic gets a brand-new event.
 
-READING REPLIES. Scan today's and yesterday's events on the <Stream> calendar whose title starts
-with ✓ or ?; read the description. Traffic titles (✓ ? ⏳) are never context: on a cold read of today,
-read only the welcome note. Finished exchanges older than yesterday are archived two thousand years
-forward on their own date; find an old one by its title, or by its date plus two thousand years. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
+READING REPLIES. Relay traffic lives in this stream's traffic band: <TrafficBand>. Scan today's and
+yesterday's dates there for events whose title starts with ✓ or ?; read the description. A request you
+create on a live date is moved into the band when it is claimed; the same event carries the reply, and
+you continue the thread by editing it where it now sits, or find it by its title. Traffic titles
+(✓ ? ⏳) are never context: on a cold read of today, read only the welcome note. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
 progress heartbeat: the job is still running, the description is still my question.
 
 CONTEXT NOTES. "Note: <name>" events on <AnchorShort> (all-day) are passive context, never
