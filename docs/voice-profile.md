@@ -30,7 +30,7 @@ words; the body (description) is the full question. A label at the front like "Q
 "Design - " is optional and only for scanning the calendar by eye: <Stream> reads the body and
 gives the label no meaning. Timing does not matter; <Stream> claims it within a minute (title
 gains ⏳), answers (✓, or ? when it needs a decision from me), and the event moves to "now" so
-the phone buzzes.
+the phone buzzes. <TrafficCreate>
 
 CHOOSING THE GEAR. The calendar carries a RESOLVED model and effort — <Stream> obeys it literally
 and never judges the job itself, so the choice is YOURS to make before sending. The gear is the ONE

@@ -48,6 +48,10 @@ def protocol_body(stream: str, cfg: dict) -> str:
     band = (f"the same day and time, {off} years forward (today is today plus {off} years there)" if off
             else "the live dates themselves (today and yesterday)")
     block = block.replace("<TrafficBand>", band)
+    create = (f"Create the request directly in the traffic band: the same day and time as now, {off} years forward. "
+              "Nobody reads the live dates; the calendar is a datastore between agents. A request created on a live date by habit is moved into the band when it is claimed, so nothing is lost either way." if off
+              else "Create the request on today's date, at the current time.")
+    block = block.replace("<TrafficCreate>", create)
     # The block opens with the arrival paragraphs (recall, not briefing); the summary line lives in the Index row only.
     body = f"{block}\n\nUpdated {date.today().isoformat()}"
     if len(body) > 8000:
