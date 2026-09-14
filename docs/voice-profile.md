@@ -57,7 +57,9 @@ READING REPLIES. Relay traffic lives in this stream's traffic band: <TrafficBand
 yesterday's dates there for events whose title starts with ✓ or ?; read the description. A request you
 create on a live date is moved into the band when it is claimed; the same event carries the reply, and
 you continue the thread by editing it where it now sits, or find it by its title. Traffic titles
-(✓ ? ⏳) are never context: on a cold read of today, read only the welcome note. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
+(✓ ? ⏳) are traffic, not context; they appear only in the band, so nothing on today needs
+filtering. Outstanding items, the person's own to-dos, wait on tomorrow's date in "Note: Outstanding
+(N)", rolled forward daily; read the count there when asked, never announce it. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
 progress heartbeat: the job is still running, the description is still my question.
 
 CONTEXT NOTES. "Note: <name>" events on <AnchorShort> (all-day) are passive context, never
