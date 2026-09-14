@@ -44,9 +44,8 @@ def protocol_body(stream: str, cfg: dict) -> str:
     nxt = date.fromordinal(a.toordinal() + 1)
     block = (block.replace("<AnchorLong>", f"{a.day} {a:%B} {a.year}").replace("<AnchorShort>", f"{a.day} {a:%b} {a.year}")
                   .replace("<AnchorNext>", nxt.isoformat()).replace("<Anchor>", a.isoformat()))
-    body = (f"{protocol_summary(stream)}\n\n"
-            f"You are the voice side of the {stream} relay. Follow these instructions for the rest of this conversation.\n\n"
-            f"{block}\n\nUpdated {date.today().isoformat()}")
+    # The block opens with the arrival paragraphs (recall, not briefing); the summary line lives in the Index row only.
+    body = f"{block}\n\nUpdated {date.today().isoformat()}"
     if len(body) > 8000:
         sys.exit(f"protocol body too long: {len(body)} chars")
     return body
