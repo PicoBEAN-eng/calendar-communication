@@ -59,6 +59,11 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     cfg = cp.load_config(Path(a.config))
+    if not cfg.get("wakeup_ritual", False):
+        # opt-in per instance: installing the units must never start a daily writer on a calendar whose
+        # operator has not said yes; set wakeup_ritual = true in comms.toml to enable
+        print("wake-up ritual is off for this instance (set wakeup_ritual = true in comms.toml); nothing written")
+        return
     tz = ZoneInfo(cfg["timezone"])
     today = datetime.now(tz).date()
     tomorrow = today + timedelta(days=1)

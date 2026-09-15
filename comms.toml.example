@@ -18,6 +18,7 @@ reply_buzz = true                       # slide a replied event to "now" with a 
 reply_buzz_lead_minutes = 1             # the popup fires this many minutes after the reply lands
 reply_buzz_popup_minutes = 10           # one popup of this length (lingers instead of auto-dismissing)
 note_anchor_date = "2000-01-01"         # events on this date, or titled "Note: …", are context notes: never claimed
+wakeup_ritual = false                   # true: tools/wakeup.py writes the daily welcome note, outstanding digest and stray rescue on this calendar
 backfill_hours = 0                      # very first poll only: how far back to look for requests (0 = from now)
 
 # --- gear (model + effort) and the sequencer ---------------------------------------------
