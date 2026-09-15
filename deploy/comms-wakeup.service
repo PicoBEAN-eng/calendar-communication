@@ -1,0 +1,13 @@
+# ~/.config/systemd/user/comms-wakeup.service — the daily wake-up ritual (tools/wakeup.py), retried on failure.
+# Installed by bin/comms-units install (which also enables comms-wakeup.timer).
+[Unit]
+Description=calendar-communication: wake-up ritual (outstanding rollover, welcome note, traffic archive, stray rescue, meridian shelf)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/calendar-communication
+Environment=PATH=%h/.local/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+# idempotent, so retry on any failure (a midnight DNS hiccup once killed the run): six tries, five minutes apart
+ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6; do %h/calendar-communication/.venv/bin/python %h/calendar-communication/tools/wakeup.py && exit 0; echo "wake-up attempt $i failed; retrying in 5 min"; sleep 300; done; exit 1'

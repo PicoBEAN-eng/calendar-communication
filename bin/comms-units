@@ -4,7 +4,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dst="$HOME/.config/systemd/user"
-units="comms-poller.service comms-poller.timer comms-inbox.service"
+units="comms-poller.service comms-poller.timer comms-inbox.service comms-wakeup.service comms-wakeup.timer"
 case "${1:-status}" in
   install)
     mkdir -p "$dst"
@@ -14,14 +14,14 @@ case "${1:-status}" in
     done
     for u in $units; do cp "$here/deploy/$u" "$dst/$u"; done
     systemctl --user daemon-reload
-    systemctl --user enable --now comms-poller.timer comms-inbox.service
+    systemctl --user enable --now comms-poller.timer comms-inbox.service comms-wakeup.timer
     echo "installed: $units" ;;
   remove)
-    systemctl --user disable --now comms-poller.timer comms-inbox.service 2>/dev/null || true
+    systemctl --user disable --now comms-poller.timer comms-inbox.service comms-wakeup.timer 2>/dev/null || true
     for u in $units; do rm -f "$dst/$u"; done
     systemctl --user daemon-reload; echo "removed" ;;
   status)
-    systemctl --user list-timers comms-poller.timer --no-pager | sed -n 1,2p
+    systemctl --user list-timers comms-poller.timer comms-wakeup.timer --no-pager | sed -n 1,3p
     systemctl --user is-active comms-inbox.service && journalctl --user -u comms-inbox.service -n 3 --no-pager ;;
   *) echo "usage: comms-units install|status|remove" >&2; exit 2 ;;
 esac

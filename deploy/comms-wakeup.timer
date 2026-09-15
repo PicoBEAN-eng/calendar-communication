@@ -1,0 +1,10 @@
+[Unit]
+Description=calendar-communication: wake-up ritual just after local midnight, again at 06:30 as a safety re-run (idempotent)
+
+[Timer]
+OnCalendar=*-*-* 00:05:00
+OnCalendar=*-*-* 06:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -46,6 +46,9 @@ and on the calendar itself.
 | `bin/comms-update` | ops | pull main, refresh deps if their manifests changed, smoke-test, reinstall units, restart the session if needed |
 | `bin/comms-push` | ops | publish local commits: rebase onto `origin/main`, then push — refuses a dirty tree, never forces |
 | `tools/note_protocol.py` | Google | publish this stream's copy of the phone rules as a context note and rebuild `Note: Index` |
+| `tools/wakeup.py` | Google | the daily wake-up ritual: roll outstanding items to tomorrow, lay the welcome note on today, archive finished traffic into the band, rescue strays from the anchor date, shelve the meridian spans where `tcm-clock` exists (`deploy/comms-wakeup.timer`, 00:05 and 06:30 local, retried) |
+| `tools/meridian_day.py` | Google | ambient span writer for the TCM meridian clock (optional; needs `tcm-clock`) |
+| `tools/keys.py` | — | per-instance inert search keys (P2) in `state/keys.json`, minted with a collision check |
 | `docs/voice-profile.md` | phone | the phone half of the contract: one profile instruction for all streams |
 | `deploy/` | ops | `comms-poller.timer` (every minute) and `comms-inbox.service` (Restart=always) |
 | `comms.toml` | config | this instance's identity and settings (`comms.toml.example` is the template) |
