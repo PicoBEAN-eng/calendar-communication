@@ -497,7 +497,7 @@ def apply_reply(svc, cfg: dict, state: dict, event_id: str, status: str, text: s
         "extendedProperties": {"private": {"comms_state": status, "comms_replied_at": stamp,
                                            "comms_turn": str(turn)}},
     }
-    check_cap(body.get("description") or "", f"reply on {eid}")
+    check_cap(body.get("description") or "", f"reply on {event_id}")
     if cfg["reply_buzz"]:
         # Reminders only fire ahead of the start, so slide the event to now + popup + lead:
         # the popup fires in `lead` minutes and the phone shows the title (now carrying ✓ or ?)
