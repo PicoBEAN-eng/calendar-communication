@@ -106,7 +106,7 @@ def main():
         body = event_body(m, start, end, d, for_day, tz)
         print(("[dry] " if a.dry_run else "") + f"span {body['start']['dateTime'][:16]} -> {body['end']['dateTime'][11:16]}  {body['summary']}")
         if not a.dry_run:
-            svc.events().insert(calendarId=cal, body=body).execute()
+            cp.insert_event(svc, cal, body)
         n += 1
     print(f"{n} spans for {for_day} shelved on {for_day + timedelta(days=OFFSET_DAYS)}")
 

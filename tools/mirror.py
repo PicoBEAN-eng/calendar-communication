@@ -25,7 +25,7 @@ import comms_poller as cp  # noqa: E402
 
 FENCE = re.compile(r"%% vault-only %%.*?%% /vault-only %%\n?", re.S)
 UNSAFE = re.compile(r'[\\/:*?"<>|#^\[\]]+')
-STABLE_SECONDS = 30
+STABLE_SECONDS = 10   # the relay daemon writes files atomically; the guard only covers our own just-written files
 CAP = 7800
 
 
@@ -59,18 +59,17 @@ def write_file(path: Path, canon: str, keep_fences: str, dry: bool):
 
 def write_event(svc, cal, ev, canon: str, dry: bool):
     if len(canon) > CAP:
-        print(f"SKIP {ev['summary']}: {len(canon)} chars exceeds the cap; part n of m splitting is the next increment")
+        print(f"SKIP {ev['summary']}: {len(canon)} chars exceeds the cap; part n of m splitting is the next increment (flagged, never truncated)")
         return False
     print(("[dry] " if dry else "") + f"calendar <- vault  {ev['summary']}")
     if not dry:
-        svc.events().patch(calendarId=cal, eventId=ev["id"], body={"description": canon}).execute()
+        cp.write_event(svc, cal, ev["id"], {"description": canon}, existing=ev)
     return True
 
 
 def set_memory(svc, cal, ev, rel: str, hsh: str, dry: bool):
     if not dry:
-        priv = {**(ev.get("extendedProperties", {}).get("private", {})), "mirror_path": rel, "mirror_hash": hsh}
-        svc.events().patch(calendarId=cal, eventId=ev["id"], body={"extendedProperties": {"private": priv}}).execute()
+        cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": rel, "mirror_hash": hsh}}}, existing=ev, verify=False)
 
 
 def conflict_save(vault: Path, rel: str, loser_text: str, who: str, dry: bool):
@@ -129,7 +128,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     cfg = cp.load_config(Path(a.config))
-    vault = Path(a.vault or cfg.get("mirror_dir") or cfg.get("journal_dir")).expanduser()
+    if not (a.vault or cfg.get("mirror_dir")):
+        print("mirror is off for this instance (set mirror_dir in comms.toml); nothing done"); return
+    vault = Path(a.vault or cfg["mirror_dir"]).expanduser()
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     targets = []
     if a.adopt:
@@ -145,8 +146,14 @@ def main():
         rel = ev.get("extendedProperties", {}).get("private", {}).get("mirror_path")
         if rel and all(ev["id"] != t[0]["id"] for t in targets):
             targets.append((ev, rel))
+    changed = 0
     for ev, rel in targets:
-        print(f"{ev['summary']}: {mirror_one(svc, cal, vault, ev, rel, a.dry_run)}")
+        res = mirror_one(svc, cal, vault, ev, rel, a.dry_run)
+        print(f"{ev['summary']}: {res}")
+        if res not in ("in sync",) and not res.startswith("skipped"):
+            changed += 1
+    print(f"mirror pass: {len(targets)} notes, {changed} changed")
+    sys.exit(3 if changed else 0)   # exit 3 = something moved; the timer's settle loop runs again
 
 
 if __name__ == "__main__":

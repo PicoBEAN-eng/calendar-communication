@@ -179,6 +179,67 @@ def now_iso(tz: str) -> str:
 
 # "todo" = the operator's own to-do (rolled forward daily by the sweep, never the agent's job);
 # "later" = agent work deferred to its date (the sweep strips the prefix on the day, then it is claimed).
+
+# ---------- shared writer helper (2026-09-17) ----------
+# Every tool that writes a description goes through here. Three guards in one place:
+#   cap:   Google accepts a description longer than 8192 chars and SILENTLY truncates it to 8192 (measured);
+#          we refuse to write over the cap and detect a read-back of exactly 8192 as the truncation signature.
+#   pace:  one per-user quota of ~400 requests/min is shared by the poller, the ritual and the mirror; each
+#          process paces itself to PACE_PER_MIN so a burst never starves the relay.
+#   merge: a full-event update wipes location and private properties; write_event always re-reads and merges
+#          them unless the caller passes replace_meta=True.
+DESCRIPTION_CAP = 8192
+PACE_PER_MIN = 200
+_pace = {"stamps": []}
+
+
+class CapExceeded(Exception):
+    pass
+
+
+def check_cap(text: str, where: str = "") -> str:
+    if text is not None and len(text) > DESCRIPTION_CAP:
+        raise CapExceeded(f"{where or 'description'}: {len(text)} chars exceeds the {DESCRIPTION_CAP} cap; split it (part n of m) instead of writing")
+    return text
+
+
+def pace():
+    """Sleep just enough to stay under PACE_PER_MIN calls in any rolling minute."""
+    import time as _t
+    now = _t.time()
+    st = [t for t in _pace["stamps"] if now - t < 60]
+    if len(st) >= PACE_PER_MIN:
+        _t.sleep(max(0.0, 60 - (now - st[0])))
+        now = _t.time(); st = [t for t in st if now - t < 60]
+    st.append(now); _pace["stamps"] = st
+
+
+def write_event(svc, calendar_id: str, event_id: str, body: dict, *, replace_meta: bool = False,
+                verify: bool = True, existing: dict | None = None) -> dict:
+    """Patch an event safely: cap-checked, paced, and with location + private properties merged
+    (read-merge-write) unless replace_meta. Returns the patched event. Raises CapExceeded before writing."""
+    if "description" in body:
+        check_cap(body["description"], f"event {event_id}")
+    if not replace_meta:
+        if existing is None:
+            pace(); existing = svc.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        keep = (existing.get("extendedProperties") or {}).get("private") or {}
+        given = (body.get("extendedProperties") or {}).get("private") or {}
+        body = {**body, "extendedProperties": {"private": {**keep, **given}}}
+        if "location" not in body and existing.get("location"):
+            body["location"] = existing["location"]
+    pace(); ev = svc.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+    if verify and "description" in body and len(ev.get("description") or "") == DESCRIPTION_CAP and len(body["description"]) != DESCRIPTION_CAP:
+        raise CapExceeded(f"event {event_id}: read-back is exactly {DESCRIPTION_CAP} chars, the truncation signature")
+    return ev
+
+
+def insert_event(svc, calendar_id: str, body: dict) -> dict:
+    if "description" in body:
+        check_cap(body["description"], body.get("summary", "new event"))
+    pace(); return svc.events().insert(calendarId=calendar_id, body=body).execute()
+
+
 NOTE_TITLE = re.compile(r"^\s*(?:note|todo|later)(?:[:\-]|\s)", re.IGNORECASE)
 
 
@@ -436,6 +497,7 @@ def apply_reply(svc, cfg: dict, state: dict, event_id: str, status: str, text: s
         "extendedProperties": {"private": {"comms_state": status, "comms_replied_at": stamp,
                                            "comms_turn": str(turn)}},
     }
+    check_cap(body.get("description") or "", f"reply on {eid}")
     if cfg["reply_buzz"]:
         # Reminders only fire ahead of the start, so slide the event to now + popup + lead:
         # the popup fires in `lead` minutes and the phone shows the title (now carrying ✓ or ?)

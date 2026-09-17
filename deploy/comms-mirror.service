@@ -1,0 +1,13 @@
+# ~/.config/systemd/user/comms-mirror.service — the vault<->calendar mirror pass (tools/mirror.py), with a settle loop.
+# Installed by bin/comms-units install (which also enables comms-mirror.timer). Opt-in: mirror_dir in comms.toml.
+[Unit]
+Description=calendar-communication: vault<->calendar mirror pass with settle loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/calendar-communication
+Environment=PATH=%h/.local/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+# exit 3 = something moved: wait past the stability guard and run again, until a pass is quiet (max 6 passes)
+ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6; do %h/calendar-communication/.venv/bin/python %h/calendar-communication/tools/mirror.py; rc=$?; [ $rc -eq 3 ] || exit $rc; sleep 15; done; exit 0'

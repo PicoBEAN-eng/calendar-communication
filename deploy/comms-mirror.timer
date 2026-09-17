@@ -1,0 +1,11 @@
+[Unit]
+Description=calendar-communication: run the mirror pass every five minutes (no-op unless mirror_dir is set)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

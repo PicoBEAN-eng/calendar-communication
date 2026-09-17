@@ -103,11 +103,12 @@ def upsert(svc, cfg, existing: dict, title: str, body: str, apply: bool):
           "reminders": {"useDefault": False}, "transparency": "transparent",
           "extendedProperties": {"private": {"comms_kind": "note", "comms_writer": "note_protocol"}}}
     verb = "update " if title in existing else "insert "
+    cp.check_cap(body, title)
     if apply:
         if title in existing:
             svc.events().update(calendarId=cfg["calendar_id"], eventId=existing[title], body=ev).execute()
         else:
-            svc.events().insert(calendarId=cfg["calendar_id"], body=ev).execute()
+            cp.insert_event(svc, cfg["calendar_id"], ev)
     print(f"{'' if apply else '[dry-run] '}{verb}{title}  ({len(body)} chars)")
 
 
