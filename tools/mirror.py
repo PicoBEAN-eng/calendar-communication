@@ -22,6 +22,7 @@ from pathlib import Path
 CC = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CC))
 import comms_poller as cp  # noqa: E402
+import links  # noqa: E402  (tools/links.py: identity keys + link translation)
 
 FENCE = re.compile(r"%% vault-only %%.*?%% /vault-only %%\n?", re.S)
 UNSAFE = re.compile(r'[\\/:*?"<>|#^\[\]]+')
@@ -31,6 +32,19 @@ CAP = 7800
 
 def canonical(text: str) -> str:
     return FENCE.sub("", text).strip()
+
+
+# Link registry (name <-> identity key) over every mirrored note; filled by main() before any sync.
+REG = {"name2key": {}, "key2name": {}, "missing": set()}
+
+
+def register(ev, rel: str):
+    key = links.key_of(canonical(ev.get("description") or ""))
+    if not key:
+        return
+    for name in (re.sub(r"^Note:\s*", "", ev.get("summary", "")).strip(), Path(rel).stem):
+        REG["name2key"][name] = key
+    REG["key2name"][key] = re.sub(r"^Note:\s*", "", ev.get("summary", "")).strip()
 
 
 def fences(text: str) -> str:
@@ -58,6 +72,7 @@ def write_file(path: Path, canon: str, keep_fences: str, dry: bool):
 
 
 def write_event(svc, cal, ev, canon: str, dry: bool):
+    canon = links.up(canon, REG["name2key"], REG["missing"])   # vault form -> calendar form (glued link keys)
     if len(canon) > CAP:
         print(f"SKIP {ev['summary']}: {len(canon)} chars exceeds the cap; part n of m splitting is the next increment (flagged, never truncated)")
         return False
@@ -85,7 +100,7 @@ def mirror_one(svc, cal, vault: Path, ev, rel: str, dry: bool):
     path = vault / rel
     priv = ev.get("extendedProperties", {}).get("private", {})
     last = priv.get("mirror_hash")
-    e_canon = canonical(ev.get("description") or "")
+    e_canon = links.down(canonical(ev.get("description") or ""), REG["key2name"])   # calendar form -> vault form
     if not path.exists():
         write_file(path, e_canon, "", dry)
         set_memory(svc, cal, ev, rel, h(e_canon), dry)
@@ -140,19 +155,27 @@ def main():
             sys.exit(f"no event titled {a.adopt!r} on {a.layer}")
         targets.append((ev, f"{a.folder}/{file_name(ev['summary'])}"))
     # everything already under the mirror: events carrying mirror_path (search the structural region)
-    r = svc.events().list(calendarId=cal, timeMin="3000-01-01T00:00:00Z", timeMax="3050-01-01T00:00:00Z", singleEvents=True,
-                          privateExtendedProperty=None, maxResults=2500).execute()
-    for ev in r.get("items", []):
+    items, page = [], None
+    while True:
+        r = svc.events().list(calendarId=cal, timeMin="3000-01-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
+                              maxResults=2500, pageToken=page).execute()
+        items += r.get("items", []); page = r.get("nextPageToken")
+        if not page:
+            break
+    for ev in items:
         rel = ev.get("extendedProperties", {}).get("private", {}).get("mirror_path")
         if rel and all(ev["id"] != t[0]["id"] for t in targets):
             targets.append((ev, rel))
+    for ev, rel in targets:
+        register(ev, rel)
     changed = 0
     for ev, rel in targets:
         res = mirror_one(svc, cal, vault, ev, rel, a.dry_run)
         print(f"{ev['summary']}: {res}")
         if res not in ("in sync",) and not res.startswith("skipped"):
             changed += 1
-    print(f"mirror pass: {len(targets)} notes, {changed} changed")
+    print(f"mirror pass: {len(targets)} notes, {changed} changed"
+          + (f"; {len(REG['missing'])} link targets without a key stayed name-only" if REG["missing"] else ""))
     sys.exit(3 if changed else 0)   # exit 3 = something moved; the timer's settle loop runs again
 
 
