@@ -133,6 +133,28 @@ def mirror_one(svc, cal, vault: Path, ev, rel: str, dry: bool):
     return "conflict: calendar won"
 
 
+BLOCK_REF = re.compile(r"!?\[\[([^\]\|#]+?)#\^([A-Za-z0-9-]+)(?:\\?\|[^\]]*)?\]\]")
+
+
+def dangling_blocks(vault: Path, rels) -> list:
+    """Block references ([[Name#^id]] / ![[Name#^id]]) among the mirrored files whose ^id is not in the
+    target note (searched by basename across the whole vault). Block ids are plain text to the mirror:
+    never stripped or reflowed; this only reports where a quote would point at nothing."""
+    stems = {}
+    for p in vault.rglob("*.md"):
+        stems.setdefault(p.stem, []).append(p)
+    out = []
+    for rel in rels:
+        f = vault / rel
+        if not f.exists():
+            continue
+        for name, bid in BLOCK_REF.findall(f.read_text(encoding="utf-8", errors="replace")):
+            targets = stems.get(links.basename(name), [])
+            if not any(re.search(r"\^" + re.escape(bid) + r"\b", t.read_text(encoding="utf-8", errors="replace")) for t in targets):
+                out.append((rel, name, bid))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(CC / "comms.toml"))
@@ -174,7 +196,11 @@ def main():
         print(f"{ev['summary']}: {res}")
         if res not in ("in sync",) and not res.startswith("skipped"):
             changed += 1
+    dangling = dangling_blocks(vault, [rel for _, rel in targets])
+    for rel, name, bid in dangling:
+        print(f"dangling block reference: {rel} -> [[{name}#^{bid}]] (no such block id in the target)")
     print(f"mirror pass: {len(targets)} notes, {changed} changed"
+          + (f"; {len(dangling)} dangling block references" if dangling else "")
           + (f"; {len(REG['missing'])} link targets without a key stayed name-only" if REG["missing"] else ""))
     sys.exit(3 if changed else 0)   # exit 3 = something moved; the timer's settle loop runs again
 
