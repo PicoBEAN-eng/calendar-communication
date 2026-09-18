@@ -188,7 +188,7 @@ def main():
             cp.check_cap(up, title)
         except cp.CapExceeded as ex:
             print("SKIP", ex); counts["skipped over cap"] += 1; continue
-        body = {"summary": title, "start": {"date": day}, "end": {"date": day}, "location": key, "description": up,
+        body = {"summary": title, "start": {"date": day}, "end": {"date": (date.fromisoformat(day) + timedelta(days=1)).isoformat()}, "location": key, "description": up,
                 "extendedProperties": {"private": {"comms_kind": "note", "comms_writer": "mirror",
                                                    "mirror_path": rel, "mirror_hash": mirror.h(canon)}}}
         cp.insert_event(svc, cal, body); counts["promoted up"] += 1
