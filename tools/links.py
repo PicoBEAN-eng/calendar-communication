@@ -23,7 +23,7 @@ def is_key(tok: str) -> bool:
 def mint(taken: set) -> str:
     while True:
         k = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
-        if is_key(k) and k not in taken:
+        if is_key(k) and k[0] not in "pc" and k not in taken:   # p/c are reserved marker letters
             taken.add(k)
             return k
 

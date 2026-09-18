@@ -23,6 +23,7 @@ CC = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CC))
 import comms_poller as cp  # noqa: E402
 import links  # noqa: E402  (tools/links.py: identity keys + link translation)
+import structure as st  # noqa: E402  (tools/structure.py: parent tokens, folder-notes, drag translation)
 
 FENCE = re.compile(r"%% vault-only %%.*?%% /vault-only %%\n?", re.S)
 UNSAFE = re.compile(r'[\\/:*?"<>|#^\[\]]+')
@@ -56,7 +57,7 @@ def h(text: str) -> str:
 
 
 def file_name(title: str) -> str:
-    return UNSAFE.sub("-", re.sub(r"^Note:\s*", "", title)).strip() + ".md"
+    return UNSAFE.sub("-", re.sub(r"^Note:?\s*", "", title)).strip() + ".md"
 
 
 def stable(path: Path) -> bool:
@@ -155,6 +156,101 @@ def dangling_blocks(vault: Path, rels) -> list:
     return out
 
 
+def list_future(svc, cal):
+    items, page = [], None
+    while True:
+        r = svc.events().list(calendarId=cal, timeMin="2999-12-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
+                              maxResults=2500, pageToken=page).execute()
+        items += r.get("items", []); page = r.get("nextPageToken")
+        if not page:
+            return [e for e in items if re.match(r"^Note:?\s", e.get("summary", ""))]
+
+
+def set_cache(svc, cal, n, rel, dry):
+    if not dry:
+        cp.write_event(svc, cal, n.ev["id"], {"extendedProperties": {"private": {"mirror_path": rel}}}, existing=n.ev, verify=False)
+    n.ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_path"] = rel
+    n.cache = rel
+
+
+def set_parent(svc, cal, n, parent, dry):
+    n.parent = parent
+    loc = st.format_location(n.key, parent, n.classes, n.others)
+    print(("[dry] " if dry else "") + f"token   <- vault   {n.name}: parent -> {parent}")
+    if not dry:
+        cp.write_event(svc, cal, n.ev["id"], {"location": loc}, existing=n.ev, verify=False)
+    n.ev["location"] = loc
+
+
+def move_file(vault, n, rel, dry):
+    src, dst = vault / n.actual, vault / rel
+    print(("[dry] " if dry else "") + f"vault   <- token   {n.name}: {n.actual} -> {rel}")
+    if not dry:
+        if not src.exists() and dst.exists():   # already carried there by its folder's move
+            n.actual = rel; return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+        if n.is_folder:      # a folder-note carries its folder: move the rest of the directory with it
+            for child in list(src.parent.iterdir()):
+                child.rename(dst.parent / child.name)
+            try:
+                src.parent.rmdir()
+            except OSError:
+                pass
+    n.actual = rel
+
+
+def init_structure(svc, cal, vault, nodes, dry):
+    """One-time migration: folder-notes for the root and every folder the caches name; p-tokens for
+    every note from its cached directory. Existing notes named like their folder become the folder-note."""
+    by_title = {n.ev["summary"]: n for n in nodes.values()}
+    dirs = sorted({str(Path(n.cache).parent) for n in nodes.values() if n.cache and not n.pinned}, key=lambda d: d.count("/"))
+    root_dir = st.ROOT_NAME
+    dirs = [d for d in dirs if d == root_dir or d.startswith(root_dir + "/")]
+    if root_dir not in dirs:
+        dirs.insert(0, root_dir)
+    folder_of_dir = {}
+    for d in dirs:
+        name = Path(d).name
+        parent_dir = str(Path(d).parent) if d != root_dir else None
+        n = by_title.get(f"Note: {name}")
+        if n is None:
+            key = links.mint(TAKEN)
+            body = f"# {name}\n\n(empty)\n\n---\n{key}\n"
+            ev = {"summary": f"Note: {name}", "start": {"date": st.FOLDER_DAY}, "end": {"date": "3000-01-03"},
+                  "location": key, "description": body,
+                  "extendedProperties": {"private": {"comms_kind": "folder", "comms_writer": "mirror", "mirror_path": f"{d}/{name}.md"}}}
+            print(("[dry] " if dry else "") + f"folder-note created: Note: {name} ({d})")
+            if not dry:
+                ev = cp.insert_event(svc, cal, ev)
+            else:
+                ev["id"] = f"dry-{key}"; ev["updated"] = "2000-01-01T00:00:00Z"
+            n = st.Node(ev); n.key = key; nodes[key] = n; by_title[ev["summary"]] = n
+        n.is_folder = True
+        n.ev.setdefault("extendedProperties", {}).setdefault("private", {})["comms_kind"] = "folder"
+        folder_of_dir[d] = n
+        if parent_dir and not n.parent:
+            n.parent = folder_of_dir[parent_dir].key
+        loc = st.format_location(n.key, n.parent, n.classes, n.others)
+        if not dry:
+            cp.write_event(svc, cal, n.ev["id"], {"location": loc, "extendedProperties": {"private": {"comms_kind": "folder"}}}, existing=n.ev, verify=False)
+        n.ev["location"] = loc      # the cache is left alone: derive() moves the file if the folder-note sits elsewhere
+    for n in nodes.values():
+        if n.is_folder or n.pinned or not n.cache or n.parent:
+            continue
+        d = str(Path(n.cache).parent)
+        if d in folder_of_dir:
+            n.parent = folder_of_dir[d].key
+            loc = st.format_location(n.key, n.parent, n.classes, n.others)
+            if not dry:
+                cp.write_event(svc, cal, n.ev["id"], {"location": loc}, existing=n.ev, verify=False)
+            n.ev["location"] = loc
+    print(f"init: {len(folder_of_dir)} folder-notes, parents set on {sum(1 for n in nodes.values() if n.parent)} notes")
+
+
+TAKEN = set()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(CC / "comms.toml"))
@@ -162,6 +258,7 @@ def main():
     ap.add_argument("--adopt", help="exact title to bring under the mirror")
     ap.add_argument("--layer", help="YYYY-MM-DD of the note's layer day (with --adopt)")
     ap.add_argument("--folder", help="vault folder for that layer (with --adopt)")
+    ap.add_argument("--init-structure", action="store_true", help="one-time: folder-notes + parent tokens from the cached paths")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     cfg = cp.load_config(Path(a.config))
@@ -169,40 +266,77 @@ def main():
         print("mirror is off for this instance (set mirror_dir in comms.toml); nothing done"); return
     vault = Path(a.vault or cfg["mirror_dir"]).expanduser()
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
-    targets = []
+    events = list_future(svc, cal)
     if a.adopt:
-        r = svc.events().list(calendarId=cal, timeMin=f"{a.layer}T00:00:00Z", timeMax=f"{a.layer}T23:59:59Z", singleEvents=True, maxResults=250).execute()
-        ev = next((e for e in r.get("items", []) if e.get("summary") == a.adopt), None)
+        ev = next((e for e in events if e.get("summary") == a.adopt and (e["start"].get("date") or e["start"]["dateTime"][:10]) == a.layer), None)
         if not ev:
             sys.exit(f"no event titled {a.adopt!r} on {a.layer}")
-        targets.append((ev, f"{a.folder}/{file_name(ev['summary'])}"))
-    # everything already under the mirror: events carrying mirror_path (search the structural region)
-    items, page = [], None
-    while True:
-        r = svc.events().list(calendarId=cal, timeMin="3000-01-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
-                              maxResults=2500, pageToken=page).execute()
-        items += r.get("items", []); page = r.get("nextPageToken")
-        if not page:
-            break
-    for ev in items:
-        rel = ev.get("extendedProperties", {}).get("private", {}).get("mirror_path")
-        if rel and all(ev["id"] != t[0]["id"] for t in targets):
-            targets.append((ev, rel))
+        ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_path"] = f"{a.folder}/{file_name(ev['summary'])}"
+        if not a.dry_run:
+            cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": ev["extendedProperties"]["private"]["mirror_path"]}}}, existing=ev, verify=False)
+
+    # ---- structure pass: parent tokens are the truth, paths are derived ------------------------
+    nodes = st.build([e for e in events if e.get("extendedProperties", {}).get("private", {}).get("mirror_path") or links.key_of(e.get("description") or "")])
+    nodes = {k: n for k, n in nodes.items() if n.cache}      # only mirrored notes have positions
+    for n in nodes.values():
+        TAKEN.add(n.key)
+    if a.init_structure:
+        init_structure(svc, cal, vault, nodes, a.dry_run)
+    problems = st.derive(nodes)
+    actual = st.scan_vault(vault, {k: n.cache for k, n in nodes.items()})
+    actions = st.reconcile(nodes, vault, actual, print)
+    for kind, n, arg in actions:
+        if kind == "move-file":
+            move_file(vault, n, arg, a.dry_run); set_cache(svc, cal, n, arg, a.dry_run)
+        elif kind == "set-parent":
+            set_parent(svc, cal, n, arg, a.dry_run); set_cache(svc, cal, n, n.actual, a.dry_run)
+        elif kind == "cache":
+            set_cache(svc, cal, n, arg, a.dry_run)
+    if actions:
+        problems = st.derive(nodes)          # parents may have changed: re-derive before listings
+        for n in nodes.values():
+            if not n.pinned and n.derived and n.cache != n.derived:
+                set_cache(svc, cal, n, n.derived, a.dry_run)
+    for n, why in problems:
+        print(f"structure: {n.name}: {why}")
+
+    targets = [(n.ev, n.cache) for n in nodes.values()]
     for ev, rel in targets:
         register(ev, rel)
+
+    # ---- folder listings: generated on the nexus, written to both sides ------------------------
+    for n in nodes.values():
+        if not n.is_folder or n.pinned:
+            continue
+        gen = st.listing(n, nodes)
+        path = vault / n.cache
+        current = path.read_text(encoding="utf-8") if path.exists() else (n.ev.get("description") or "")
+        keep = fences(current)
+        new = st.with_listing(canonical(current), gen, n.key)
+        if canonical(new) != canonical(current) or not path.exists():
+            print(("[dry] " if a.dry_run else "") + f"listing -> both    {n.name}")
+            write_file(path, new, keep, a.dry_run)
+            if not a.dry_run:
+                cp.write_event(svc, cal, n.ev["id"], {"description": links.up(new, REG["name2key"], REG["missing"]),
+                               "extendedProperties": {"private": {"mirror_hash": h(new)}}}, existing=n.ev, verify=False)
+            n.ev["description"] = new
+            n.ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_hash"] = h(new)
+
+    # ---- content pass --------------------------------------------------------------------------
     changed = 0
     for ev, rel in targets:
         res = mirror_one(svc, cal, vault, ev, rel, a.dry_run)
-        print(f"{ev['summary']}: {res}")
+        if res != "in sync":
+            print(f"{ev['summary']}: {res}")
         if res not in ("in sync",) and not res.startswith("skipped"):
             changed += 1
     dangling = dangling_blocks(vault, [rel for _, rel in targets])
     for rel, name, bid in dangling:
         print(f"dangling block reference: {rel} -> [[{name}#^{bid}]] (no such block id in the target)")
-    print(f"mirror pass: {len(targets)} notes, {changed} changed"
-          + (f"; {len(dangling)} dangling block references" if dangling else "")
-          + (f"; {len(REG['missing'])} link targets without a key stayed name-only" if REG["missing"] else ""))
-    sys.exit(3 if changed else 0)   # exit 3 = something moved; the timer's settle loop runs again
+    print(f"mirror pass: {len(targets)} notes, {changed} changed, {len(actions)} structural actions, {len(problems)} structure notes"
+          + (f"; {len(REG['missing'])} link targets without a key stayed name-only" if REG["missing"] else "")
+          + (f"; {len(dangling)} dangling block references" if dangling else ""))
+    sys.exit(3 if (changed or actions) else 0)   # exit 3 = something moved; the timer's settle loop runs again
 
 
 if __name__ == "__main__":
