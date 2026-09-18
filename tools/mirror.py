@@ -45,7 +45,62 @@ def register(ev, rel: str):
         return
     for name in (re.sub(r"^Note:\s*", "", ev.get("summary", "")).strip(), Path(rel).stem):
         REG["name2key"][name] = key
-    REG["key2name"][key] = re.sub(r"^Note:\s*", "", ev.get("summary", "")).strip()
+    REG["key2name"][key] = Path(rel).stem      # links resolve by FILE name in Obsidian (":" etc. are unsafe there)
+
+
+PART_MARK = "%% part %%"
+PART_TITLE = re.compile(r" · part (\d+) of (\d+)$")
+
+
+def split_parts(canon: str):
+    """A note becomes several calendar events when it carries part markers (the operator's or an
+    emitter's carving, never re-flowed) or when it is over the cap (mechanical paragraph split).
+    Returns (parts, mode) with mode in 'marker' | 'auto' | None."""
+    if re.search(r"(?m)^" + re.escape(PART_MARK) + r"\s*$", canon):
+        parts = [p.strip() for p in re.split(r"(?m)^" + re.escape(PART_MARK) + r"\s*$", canon)]
+        return [p for p in parts if p], "marker"
+    if len(canon) <= CAP:
+        return [canon], None
+    parts, cur = [], ""
+    for para in canon.split("\n\n"):
+        piece = (cur + "\n\n" + para) if cur else para
+        if len(piece) <= CAP - 20:
+            cur = piece; continue
+        if cur:
+            parts.append(cur); cur = ""
+        while len(para) > CAP - 20:
+            cut = max(para.rfind("\n", 0, CAP - 20), para.rfind(" ", 0, CAP - 20)); cut = cut if cut > CAP // 2 else CAP - 20
+            parts.append(para[:cut].rstrip()); para = para[cut:].lstrip()
+        cur = para
+    if cur:
+        parts.append(cur)
+    return parts, "auto"
+
+
+def join_parts(parts: list, mode: str | None, key: str | None) -> str:
+    """Inverse of split_parts on the calendar side: parts carry the key line at the end of each event
+    for search; only the last one keeps it in the vault text."""
+    texts = []
+    for i, t in enumerate(parts):
+        t = t.strip()
+        if key and i < len(parts) - 1 and links.key_of(t) == key:
+            t = t[: t.rstrip().rfind(key)].rstrip()
+        texts.append(t)
+    sep = f"\n\n{PART_MARK}\n\n" if mode == "marker" else "\n\n"
+    return sep.join(texts)
+
+
+def base_title(summary: str) -> str:
+    return PART_TITLE.sub("", summary or "")
+
+
+def group_canonical(group: list) -> str:
+    """The vault-form text of a note held as one or more calendar events (sorted by part)."""
+    primary = group[0]
+    mode = primary.get("extendedProperties", {}).get("private", {}).get("mirror_split") or None
+    texts = [links.down(canonical(e.get("description") or ""), REG["key2name"]) for e in group]
+    key = links.key_of(texts[-1])
+    return join_parts(texts, mode, key) if len(texts) > 1 else texts[0]
 
 
 def fences(text: str) -> str:
@@ -72,20 +127,53 @@ def write_file(path: Path, canon: str, keep_fences: str, dry: bool):
         path.write_text(body, encoding="utf-8")
 
 
-def write_event(svc, cal, ev, canon: str, dry: bool):
-    canon = links.up(canon, REG["name2key"], REG["missing"])   # vault form -> calendar form (glued link keys)
-    if len(canon) > CAP:
-        print(f"SKIP {ev['summary']}: {len(canon)} chars exceeds the cap; part n of m splitting is the next increment (flagged, never truncated)")
-        return False
-    print(("[dry] " if dry else "") + f"calendar <- vault  {ev['summary']}")
-    if not dry:
-        cp.write_event(svc, cal, ev["id"], {"description": canon}, existing=ev)
+def write_event(svc, cal, group, canon: str, dry: bool):
+    """Write a note's vault-form text to its calendar event(s): parts are created, updated and
+    trimmed to match; every part carries the key line for search; titles say part n of m."""
+    parts, mode = split_parts(canon)
+    key = links.key_of(canon)
+    primary = group[0]
+    title = primary.get("summary") or ""
+    if primary.get("extendedProperties", {}).get("private", {}).get("mirror_part"):
+        title = base_title(title)       # a hand-parted title ("· part 1 of 2" as its own note) is left alone
+    m = len(parts)
+    bodies = []
+    for i, part in enumerate(parts):
+        body = links.up(part, REG["name2key"], REG["missing"])
+        if key and i < m - 1 and links.key_of(body) != key:
+            body = body.rstrip() + "\n\n" + key + "\n"
+        if len(body) > cp.DESCRIPTION_CAP - 8:
+            print(f"SKIP {title}: part {i + 1} is {len(body)} chars, over the cap even after splitting (flagged, never truncated)")
+            return False
+        bodies.append(body)
+    print(("[dry] " if dry else "") + f"calendar <- vault  {title}" + (f" ({m} parts)" if m > 1 else ""))
+    if dry:
+        return True
+    priv_base = {k: v for k, v in (primary.get("extendedProperties", {}).get("private") or {}).items()
+                 if k not in ("mirror_part", "mirror_parts", "mirror_split", "mirror_hash")}
+    for i, body in enumerate(bodies):
+        summary = title + (f" · part {i + 1} of {m}" if m > 1 else "")
+        priv = {"mirror_part": str(i + 1), "mirror_parts": str(m), "mirror_split": mode or ""}
+        if i < len(group):
+            cp.write_event(svc, cal, group[i]["id"], {"summary": summary, "description": body,
+                           "extendedProperties": {"private": priv}}, existing=group[i], verify=False)
+            group[i]["summary"] = summary; group[i]["description"] = body
+        else:
+            ev = cp.insert_event(svc, cal, {"summary": summary, "start": primary["start"], "end": primary["end"],
+                                            "location": primary.get("location", ""), "description": body,
+                                            "extendedProperties": {"private": {**priv_base, **priv}}})
+            group.append(ev)
+    for extra in group[m:]:
+        cp.pace(); svc.events().delete(calendarId=cal, eventId=extra["id"]).execute()
+    del group[m:]
     return True
 
 
-def set_memory(svc, cal, ev, rel: str, hsh: str, dry: bool):
-    if not dry:
-        cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": rel, "mirror_hash": hsh}}}, existing=ev, verify=False)
+def set_memory(svc, cal, group, rel: str, hsh: str, dry: bool):
+    for ev in (group if isinstance(group, list) else [group]):
+        if not dry:
+            cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": rel, "mirror_hash": hsh}}}, existing=ev, verify=False)
+        ev.setdefault("extendedProperties", {}).setdefault("private", {}).update({"mirror_path": rel, "mirror_hash": hsh})
 
 
 def conflict_save(vault: Path, rel: str, loser_text: str, who: str, dry: bool):
@@ -97,14 +185,17 @@ def conflict_save(vault: Path, rel: str, loser_text: str, who: str, dry: bool):
         p.write_text(loser_text, encoding="utf-8")
 
 
-def mirror_one(svc, cal, vault: Path, ev, rel: str, dry: bool):
+def mirror_one(svc, cal, vault: Path, group, rel: str, dry: bool):
+    if not isinstance(group, list):
+        group = [group]
+    ev = group[0]
     path = vault / rel
     priv = ev.get("extendedProperties", {}).get("private", {})
     last = priv.get("mirror_hash")
-    e_canon = links.down(canonical(ev.get("description") or ""), REG["key2name"])   # calendar form -> vault form
+    e_canon = group_canonical(group)   # calendar form (parts, glued keys) -> vault form
     if not path.exists():
         write_file(path, e_canon, "", dry)
-        set_memory(svc, cal, ev, rel, h(e_canon), dry)
+        set_memory(svc, cal, group, rel, h(e_canon), dry)
         return "created in vault"
     if not stable(path):
         return "skipped: file changed in the last 30 s (Syncthing may be mid-write)"
@@ -112,25 +203,25 @@ def mirror_one(svc, cal, vault: Path, ev, rel: str, dry: bool):
     f_canon, keep = canonical(raw), fences(raw)
     if e_canon == f_canon:
         if last != h(e_canon):
-            set_memory(svc, cal, ev, rel, h(e_canon), dry)
+            set_memory(svc, cal, group, rel, h(e_canon), dry)
         return "in sync"
     he, hf = h(e_canon), h(f_canon)
     if hf == last and he != last:
-        write_file(path, e_canon, keep, dry); set_memory(svc, cal, ev, rel, he, dry); return "calendar -> vault"
+        write_file(path, e_canon, keep, dry); set_memory(svc, cal, group, rel, he, dry); return "calendar -> vault"
     if he == last and hf != last:
-        if write_event(svc, cal, ev, f_canon, dry):
-            set_memory(svc, cal, ev, rel, hf, dry)
+        if write_event(svc, cal, group, f_canon, dry):
+            set_memory(svc, cal, group, rel, hf, dry)
         return "vault -> calendar"
     # both moved: last writer wins, loser kept
     ev_t = datetime.fromisoformat(ev["updated"].replace("Z", "+00:00"))
     f_t = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
     if f_t >= ev_t:
         conflict_save(vault, rel, e_canon, "calendar", dry)
-        if write_event(svc, cal, ev, f_canon, dry):
-            set_memory(svc, cal, ev, rel, hf, dry)
+        if write_event(svc, cal, group, f_canon, dry):
+            set_memory(svc, cal, group, rel, hf, dry)
         return "conflict: vault won"
     conflict_save(vault, rel, raw, "vault", dry)
-    write_file(path, e_canon, keep, dry); set_memory(svc, cal, ev, rel, he, dry)
+    write_file(path, e_canon, keep, dry); set_memory(svc, cal, group, rel, he, dry)
     return "conflict: calendar won"
 
 
@@ -166,10 +257,14 @@ def list_future(svc, cal):
             return [e for e in items if re.match(r"^Note:?\s", e.get("summary", ""))]
 
 
+GROUPS = {}     # identity key -> [events], all parts of a note (filled by main)
+
+
 def set_cache(svc, cal, n, rel, dry):
-    if not dry:
-        cp.write_event(svc, cal, n.ev["id"], {"extendedProperties": {"private": {"mirror_path": rel}}}, existing=n.ev, verify=False)
-    n.ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_path"] = rel
+    for ev in GROUPS.get(n.key) or [n.ev]:      # every part of the note carries the same path
+        if not dry:
+            cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": rel}}}, existing=ev, verify=False)
+        ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_path"] = rel
     n.cache = rel
 
 
@@ -276,8 +371,22 @@ def main():
             cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": ev["extendedProperties"]["private"]["mirror_path"]}}}, existing=ev, verify=False)
 
     # ---- structure pass: parent tokens are the truth, paths are derived ------------------------
-    nodes = st.build([e for e in events if e.get("extendedProperties", {}).get("private", {}).get("mirror_path") or links.key_of(e.get("description") or "")])
+    def part_no(e):
+        return int(e.get("extendedProperties", {}).get("private", {}).get("mirror_part") or 1)
+    groups = {}
+    for e in events:
+        rel_ = e.get("extendedProperties", {}).get("private", {}).get("mirror_path")
+        if rel_:
+            groups.setdefault(rel_, []).append(e)
+    for g in groups.values():
+        g.sort(key=part_no)
+        for e in g:      # structure and links see a parted note under its base title
+            if e.get("extendedProperties", {}).get("private", {}).get("mirror_part"):
+                e["summary"] = base_title(e.get("summary"))
+    nodes = st.build([g[0] for g in groups.values()])
     nodes = {k: n for k, n in nodes.items() if n.cache}      # only mirrored notes have positions
+    for n in nodes.values():
+        GROUPS[n.key] = groups.get(n.cache, [n.ev])
     for n in nodes.values():
         TAKEN.add(n.key)
     if a.init_structure:
@@ -300,9 +409,13 @@ def main():
     for n, why in problems:
         print(f"structure: {n.name}: {why}")
 
-    targets = [(n.ev, n.cache) for n in nodes.values()]
-    for ev, rel in targets:
-        register(ev, rel)
+    targets = []
+    for n in nodes.values():
+        g = groups.get(n.ev["extendedProperties"]["private"].get("mirror_path"), [n.ev])
+        g = g if g and g[0] is n.ev else [n.ev] + [e for e in g if e is not n.ev]
+        targets.append((g, n.cache))
+    for g, rel in targets:
+        register(g[0], rel)
 
     # ---- folder listings: generated on the nexus, written to both sides ------------------------
     for n in nodes.values():
@@ -324,10 +437,10 @@ def main():
 
     # ---- content pass --------------------------------------------------------------------------
     changed = 0
-    for ev, rel in targets:
-        res = mirror_one(svc, cal, vault, ev, rel, a.dry_run)
+    for g, rel in targets:
+        res = mirror_one(svc, cal, vault, g, rel, a.dry_run)
         if res != "in sync":
-            print(f"{ev['summary']}: {res}")
+            print(f"{g[0]['summary']}: {res}")
         if res not in ("in sync",) and not res.startswith("skipped"):
             changed += 1
     dangling = dangling_blocks(vault, [rel for _, rel in targets])
