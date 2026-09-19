@@ -271,6 +271,8 @@ def is_note(ev: dict, cfg: dict) -> bool:
     or the event sits on the anchor date. Never claimed, coloured, spooled or recorded."""
     if NOTE_TITLE.match(ev.get("summary") or ""):
         return True
+    if (ev.get("extendedProperties") or {}).get("private", {}).get("publish_path"):
+        return True   # a published vault note is a note whatever its title says (a retitled copy must never be claimed)
     start = ev.get("start") or {}
     when = start.get("date") or start.get("dateTime") or ""
     return when.startswith(cfg["note_anchor_date"])
