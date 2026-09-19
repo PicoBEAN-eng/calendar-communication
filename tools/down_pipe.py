@@ -29,7 +29,7 @@ comms.toml:
 
   down_pipe.py [--mode off|log|apply] [--dry-run] [--config comms.toml]      exit 0; 3 = something was applied
 """
-import argparse, difflib, json, os, re, subprocess, sys
+import argparse, difflib, html, json, os, re, subprocess, sys
 from datetime import datetime
 from pathlib import Path
 
@@ -38,6 +38,22 @@ sys.path.insert(0, str(CC)); sys.path.insert(0, str(CC / "tools"))
 import comms_poller as cp  # noqa: E402
 import links  # noqa: E402
 import publish_up as pub  # noqa: E402
+
+HTML_BREAK = re.compile(r"<\s*(?:br|/p|/div|/li|/tr)\s*/?\s*>", re.I)
+HTML_TAG = re.compile(r"</?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?/?>")   # real tags only: <b>, </p>, <a href=…>; never <name@host> or <https://…>
+
+
+def normalise_html(text: str) -> str:
+    """The calendar app stores an edited description as HTML: <br>/<p> for line breaks, entities, autolinked
+    URLs. Bring it back to the plain text the publisher wrote so the line diff sees only the edit. A body with
+    no real tags is returned untouched (angle-bracket emails and URLs in the source are not tags)."""
+    if not HTML_TAG.search(text or ""):
+        return text
+    t = HTML_BREAK.sub("\n", text)
+    t = HTML_TAG.sub("", t)
+    t = html.unescape(t).replace("\xa0", " ")
+    return "\n".join(ln.rstrip() for ln in t.splitlines())
+
 
 TICK_OPEN = re.compile(r"^(\s*[-*]\s+)\[ \](.*)$")
 TICK_DONE = re.compile(r"^(\s*[-*]\s+)\[[xX]\](.*)$")
@@ -88,7 +104,7 @@ def read_calendar_copy(svc, cal, entry, key2name) -> str | None:
             ev = svc.events().get(calendarId=cal, eventId=eid).execute()
         except Exception as e:  # noqa: BLE001
             print(f"  cannot read event {eid}: {e}"); return None
-        body = (ev.get("description") or "").rstrip()
+        body = normalise_html(ev.get("description") or "").rstrip()
         if links.key_of(body):
             body = body[: body.rfind("\n")].rstrip() if "\n" in body else ""
         parts.append(body)
@@ -201,16 +217,16 @@ def journal(path: Path, lines: list):
         f.write("\n".join(lines) + "\n")
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["off", "log", "apply"])
-    ap.add_argument("--dry-run", action="store_true", help="never write, whatever the mode")
-    ap.add_argument("--config", default=str(CC / "comms.toml"))
-    a = ap.parse_args()
-    cfg = cp.load_config(Path(a.config))
-    mode = a.mode or cfg.get("down_pipe") or "off"
+def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = False, only_rels: set | None = None) -> int:
+    """One down-pipe pass over every published note in scope (or only_rels). Returns lines applied."""
+    class A:  # the CLI namespace the body below reads
+        pass
+    a = A(); a.dry_run = dry_run
+    mode = mode or cfg.get("down_pipe") or "off"
     if mode == "off":
-        print("down-pipe is off for this instance (down_pipe = \"log\" or \"apply\" in comms.toml); nothing done"); return 0
+        if only_rels is None:
+            print("down-pipe is off for this instance (down_pipe = \"log\" or \"apply\" in comms.toml); nothing done")
+        return 0
     if not cfg.get("publish_dir"):
         print("down-pipe needs the publisher (publish_dir); nothing done"); return 0
     vault = Path(cfg["publish_dir"]).expanduser().resolve()
@@ -230,6 +246,7 @@ def main() -> int:
             print("down_pipe_folders names no mapped folder in the allowed layers; nothing in scope"); return 0
     roots = [(vault / f["path"]).resolve() for f in allowed.values()]
     key2name = {n["key"]: Path(rel).stem for rel, n in notes.items() if n.get("key")}
+    name2key = {stem: key for key, stem in key2name.items()}
     apply_only = {x.strip("/") for x in (cfg.get("down_pipe_apply_folders") or [])}
     def folder_mode(fk):
         if mode != "apply":
@@ -237,11 +254,13 @@ def main() -> int:
         if apply_only and not (fk in apply_only or folders[fk].get("path") in apply_only or folders[fk].get("spec") in apply_only):
             return "log"
         return "apply"
-    svc = cp.get_service(cfg); cal = cfg["calendar_id"]
+    svc = svc or cp.get_service(cfg); cal = cfg["calendar_id"]
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     jl, total_acc, total_rej, applied_total, snap = [], 0, 0, 0, None
     for rel, n in notes.items():
         if n.get("folder") not in allowed:
+            continue
+        if only_rels is not None and rel not in only_rels:
             continue
         p = (vault / rel)
         try:
@@ -257,7 +276,12 @@ def main() -> int:
         if cal_text is None:
             continue
         vault_text = pub.canonical(rp.read_text(encoding="utf-8", errors="replace"))
-        acc, rej = diff_note(vault_text, cal_text)
+        # Compare against the vault RENDERED the way the publisher renders it (links glued, parts split at the cap,
+        # then translated back down), so part-boundary artefacts cancel out and only a real edit shows.
+        rendered = links.down("\n\n".join(pub.split_parts(links.up(vault_text, name2key), pub.BODY_CAP)), key2name)
+        if pub.h(cal_text.strip()) in (n.get("hash"), pub.h(rendered.strip())):
+            continue      # the calendar copy is exactly what was published (or what would be now): no phone edit
+        acc, rej = diff_note(rendered, cal_text)
         if not acc and not rej:
             continue
         for r in rej:
@@ -289,9 +313,47 @@ def main() -> int:
                 jl.append(f"- {stamp} · {fmode}{' dry' if a.dry_run else ''} · WOULD {c['kind'].upper()} · `{rel}` · `{c['after'][:160]}`")
     if not a.dry_run:
         journal(jpath, jl)
+    if only_rels is not None and not total_acc and not total_rej:
+        return 0
     print(f"down-pipe pass ({mode}{', apply only ' + ', '.join(sorted(apply_only)) if apply_only else ''}): {total_acc} accepted, {total_rej} rejected, {applied_total} applied"
           + (f", snapshot {snap}" if snap else ""))
-    return 3 if applied_total else 0
+    return applied_total
+
+
+def on_event(svc, cfg: dict, ev: dict) -> int:
+    """Poller hook (2026-09-19, operator go): a changed event carrying publish_path is diffed and applied on the spot,
+    then that note is re-rendered by a lock-respecting publish pass (skipped if the timer pass holds the lock:
+    the calendar copy already carries the tick, so the next timer pass finds nothing to do). Never raises."""
+    try:
+        if (cfg.get("down_pipe") or "off") == "off":
+            return 0
+        priv = (ev.get("extendedProperties") or {}).get("private") or {}
+        rel = priv.get("publish_path")
+        if not rel or priv.get("comms_writer") != pub.WRITER:
+            return 0
+        applied = run_pass(cfg, svc, only_rels={rel})
+        if applied:
+            lock = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "comms-publish.lock"
+            py = str(CC / ".venv" / "bin" / "python")
+            r = subprocess.run(["flock", "-n", str(lock), py, str(CC / "tools" / "publish_up.py"), "--apply"],
+                               capture_output=True, text=True, timeout=300)
+            print("down-pipe: re-rendered after apply" if r.returncode == 0 else
+                  "down-pipe: re-render deferred to the timer pass (lock held)" if r.returncode == 1 else
+                  f"down-pipe: re-render failed rc={r.returncode}: {(r.stderr or r.stdout)[-300:]}")
+        return applied
+    except Exception as e:  # noqa: BLE001
+        print(f"down-pipe hook error (poller continues): {e}")
+        return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", choices=["off", "log", "apply"])
+    ap.add_argument("--dry-run", action="store_true", help="never write, whatever the mode")
+    ap.add_argument("--config", default=str(CC / "comms.toml"))
+    a = ap.parse_args()
+    cfg = cp.load_config(Path(a.config))
+    return 3 if run_pass(cfg, mode=a.mode, dry_run=a.dry_run) else 0
 
 
 if __name__ == "__main__":

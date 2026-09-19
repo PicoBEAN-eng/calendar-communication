@@ -577,7 +577,14 @@ def poll_once(svc, cfg: dict, state: dict, *, dry_run: bool = False) -> None:
         if ev.get("status") == "cancelled":
             continue
         if is_note(ev, cfg):
-            continue  # passive context note: leave it completely untouched
+            # passive context note: never claimed. A PUBLISHED note edited on the calendar is the down-pipe's
+            # business (ticks only, tools/down_pipe.py; off unless down_pipe is set in comms.toml).
+            if not dry_run and (cfg.get("down_pipe") or "off") != "off" and \
+                    (ev.get("extendedProperties") or {}).get("private", {}).get("publish_path"):
+                sys.path.insert(0, str(Path(__file__).resolve().parent / "tools"))
+                import down_pipe  # noqa: PLC0415  (lazy: tools/down_pipe imports this module)
+                down_pipe.on_event(svc, cfg, ev)
+            continue
         if ev["id"] in state["processed"]:
             if is_new_turn(state, ev):
                 claim(svc, cfg, state, ev, dry_run=dry_run)  # whiteboard: next turn of the thread
