@@ -1,0 +1,14 @@
+# ~/.config/systemd/user/comms-publish.service — the one-way vault->calendar publish pass (tools/publish_up.py --apply)
+# followed by the read-only tripwire (--verify). Installed by bin/comms-units install (which also enables
+# comms-publish.timer). Opt-in: publish_dir + publish_layers in comms.toml; a no-op otherwise.
+# flock: passes never overlap, a slow pass simply makes the next timer tick skip.
+[Unit]
+Description=calendar-communication: vault->calendar publish pass, then verify
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/calendar-communication
+Environment=PATH=%h/.local/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh -c 'flock -n %t/comms-publish.lock -c "%h/calendar-communication/.venv/bin/python %h/calendar-communication/tools/publish_up.py --apply && %h/calendar-communication/.venv/bin/python %h/calendar-communication/tools/publish_up.py --verify" || { rc=$?; [ $rc -eq 1 ] && echo "publish pass skipped: another pass holds the lock"; exit 0; }'

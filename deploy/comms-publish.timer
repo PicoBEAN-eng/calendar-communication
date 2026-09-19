@@ -1,0 +1,11 @@
+[Unit]
+Description=calendar-communication: publish pass every ten minutes (no-op unless publish_dir is set)
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -152,6 +152,43 @@ def rebuild_sidecar(mine: dict) -> dict:
     return st
 
 
+# ---- verify: the silent-failure tripwire (read-only) -------------------------------------------
+def verify(vault: Path, state: dict, mine: dict, stale_minutes: int) -> int:
+    """Compares what the vault holds now with what the calendar holds, never with 'changed since last
+    pass' (the heartbeat changes every pass by design). A stall = a file whose current hash differs from
+    its calendar copy's publish_hash AND whose mtime is older than stale_minutes (the timer had its
+    chance); or a calendar copy that is missing. Also prints the age of each folder's newest update."""
+    now = datetime.now(timezone.utc); stalls = 0; checked = 0; newest = {}
+    for rel, n in state.get("notes", {}).items():
+        p = vault / rel
+        ids = [i for i in (n.get("event_ids") or []) if i]
+        if not p.exists():
+            continue        # a gone file is the next pass's delete, not a stall
+        checked += 1
+        try:
+            cur = h(canonical(p.read_text(encoding="utf-8", errors="replace")))
+            age_min = (now - datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)).total_seconds() / 60
+        except OSError:
+            continue
+        cal_hashes = {mine[i].get("extendedProperties", {}).get("private", {}).get("publish_hash") for i in ids if i in mine}
+        missing = [i for i in ids if i not in mine]
+        for i in ids:
+            if i in mine:
+                u = mine[i].get("updated", ""); fk = n.get("folder")
+                newest[fk] = max(newest.get(fk, ""), u)
+        if missing:
+            print(f"STALL  {rel}: {len(missing)} calendar copy missing"); stalls += 1
+        elif cur not in cal_hashes and age_min > stale_minutes:
+            print(f"STALL  {rel}: vault changed {age_min:.0f} min ago, calendar copy still older"); stalls += 1
+    for fk, f in state.get("folders", {}).items():
+        u = newest.get(fk)
+        if u:
+            age = (now - datetime.fromisoformat(u.replace("Z", "+00:00"))).total_seconds() / 60
+            print(f"folder {f.get('label') or f.get('spec')}: newest calendar update {age:.0f} min ago")
+    print(f"verify: {checked} files checked, {stalls} stalls")
+    return 2 if stalls else 0
+
+
 # ---- resolution -------------------------------------------------------------------------------
 def parse_layers(cfg) -> list:
     out = []
@@ -186,6 +223,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--rebuild-sidecar", action="store_true", help="rebuild state/publish.json from the calendar, then continue")
+    ap.add_argument("--verify", action="store_true", help="read-only tripwire: file hash vs calendar copy, stamp ages; exit 2 on a stall")
+    ap.add_argument("--stale-minutes", type=int, default=25, help="with --verify: a change unpublished for longer than this is a stall")
     ap.add_argument("--config", default=str(CC / "comms.toml"))
     a = ap.parse_args()
     dry = not a.apply
@@ -202,6 +241,8 @@ def main():
     events = list_events(svc, cal)
     mine = {e["id"]: e for e in events if e.get("extendedProperties", {}).get("private", {}).get("comms_writer") == WRITER}
     state = rebuild_sidecar(mine) if a.rebuild_sidecar else load_state(state_path)
+    if a.verify:
+        sys.exit(verify(vault, state, mine, a.stale_minutes))
     if a.rebuild_sidecar:
         print(f"sidecar rebuilt from the calendar: {len(state['folders'])} folders, {len(state['notes'])} notes")
     folders, notes = state["folders"], state["notes"]
