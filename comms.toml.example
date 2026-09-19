@@ -37,3 +37,14 @@ spool_dir = "spool"
 state_file = "state/poller_state.json"
 token_file = "state/token.json"
 client_secret_file = "state/client_secret.json"
+
+# --- down-pipe: calendar -> vault, TICKS ONLY (2026-09-19; spec "Note: Down-pipe on Active and vault revert") ------
+# Runs before each publish pass. "log" journals what would be applied and writes nothing (phase A);
+# "apply" writes the three accepted shapes (box ticked, number over a blank, a line under Notes) into the
+# vault file by exact line match, after running down_pipe_snapshot_cmd once per pass. Scope = layer years listed.
+down_pipe = "off"
+down_pipe_layers = []                                  # e.g. ["3060"]
+down_pipe_max_lines = 50
+# down_pipe_journal = "/path/to/vault/Records/Down-pipe log.md"   # default <publish_dir>/The Warehouse/Records/Down-pipe log.md
+# down_pipe_snapshot_cmd = "/path/to/vault-snapshot"              # git snapshot taken before the first write of a pass
+
