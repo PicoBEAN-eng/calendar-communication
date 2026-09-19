@@ -21,6 +21,7 @@ is snapshotted with everything else).
 comms.toml:
     down_pipe = "off" | "log" | "apply"        (default off)
     down_pipe_layers = ["3060"]
+    down_pipe_folders = ["! Active/Location Checks"]   # optional: narrow to these folder paths or keys within the layers
     down_pipe_max_lines = 50
     down_pipe_journal = "/path/to/vault/The Warehouse/Records/Down-pipe log.md"
     down_pipe_snapshot_cmd = "/home/x/woolly-workplace/bin/vault-snapshot"
@@ -221,6 +222,11 @@ def main() -> int:
     state = pub.load_state(Path(cfg.get("publish_state") or (CC / "state" / "publish.json")))
     folders, notes = state["folders"], state["notes"]
     allowed = {fk: f for fk, f in folders.items() if str(f.get("layer")) in layers and f.get("path")}
+    only = {x.strip("/") for x in (cfg.get("down_pipe_folders") or [])}      # optional narrower fence: folder paths or keys
+    if only:
+        allowed = {fk: f for fk, f in allowed.items() if fk in only or f.get("path") in only or f.get("spec") in only}
+        if not allowed:
+            print("down_pipe_folders names no mapped folder in the allowed layers; nothing in scope"); return 0
     roots = [(vault / f["path"]).resolve() for f in allowed.values()]
     key2name = {n["key"]: Path(rel).stem for rel, n in notes.items() if n.get("key")}
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]

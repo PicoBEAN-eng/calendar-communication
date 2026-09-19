@@ -44,6 +44,7 @@ client_secret_file = "state/client_secret.json"
 # vault file by exact line match, after running down_pipe_snapshot_cmd once per pass. Scope = layer years listed.
 down_pipe = "off"
 down_pipe_layers = []                                  # e.g. ["3060"]
+# down_pipe_folders = ["! Active/Location Checks"]     # optional: only these folder paths/keys within those layers
 down_pipe_max_lines = 50
 # down_pipe_journal = "/path/to/vault/Records/Down-pipe log.md"   # default <publish_dir>/The Warehouse/Records/Down-pipe log.md
 # down_pipe_snapshot_cmd = "/path/to/vault-snapshot"              # git snapshot taken before the first write of a pass
