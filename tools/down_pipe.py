@@ -73,16 +73,22 @@ def classify(v: str, c: str):
         if mo.group(2) == mc.group(2):
             return "tick", None
         # tick AND a number on the same line
-        if BLANK.search(mo.group(2)) and blank_to_number(mo.group(2), mc.group(2)):
+        if (BLANK.search(mo.group(2)) or TRAILING_FIELD.search(mo.group(2))) and blank_to_number(mo.group(2), mc.group(2)):
             return "tick+number", None
         return None, "ticked line also changed its text"
-    if BLANK.search(v) and blank_to_number(v, c):
+    if (BLANK.search(v) or TRAILING_FIELD.search(v)) and blank_to_number(v, c):
         return "number", None
     return None, "text changed (not a tick, a number over a blank, or a note)"
 
 
+TRAILING_FIELD = re.compile(r":\s*$")
+
+
 def blank_to_number(v: str, c: str) -> bool:
-    """True iff c equals v with every blank replaced by digits (at least one blank filled)."""
+    """True iff c equals v with every blank replaced by digits (at least one blank filled). A line ending in a
+    bare field ("… · actual:", the 2026-09-19 sheet form) counts as one blank at its end."""
+    if TRAILING_FIELD.search(v) and not BLANK.search(v):
+        return bool(re.match("^" + re.escape(v.rstrip()) + r"\s*\d+\s*$", c))
     pat = "^" + "".join(re.escape(seg) if i % 2 == 0 else r"(\d+|_+)"
                         for i, seg in enumerate(re.split(r"(_{2,}|(?<![\w_])_(?![\w_]))", v))) + "$"
     m = re.match(pat, c)
