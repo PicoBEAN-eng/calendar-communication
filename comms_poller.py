@@ -214,6 +214,27 @@ def pace():
     st.append(now); _pace["stamps"] = st
 
 
+def merge_location(old: str, new: str) -> str:
+    """Location grammar (agreed 2026-09-19): space-separated, order-free tokens. A bare 5-char key is
+    identity, p<key> the immediate parent, c<key> a class, name=value a routing token, anything else
+    free text. Merging keeps the old tokens except where the new location speaks for the same slot:
+    a new p-token replaces the old p-token, a new name=value replaces the old one with that name;
+    everything else is a union, new tokens after old, no duplicates."""
+    def slot(tok):
+        if len(tok) == 6 and tok[0] == "p" and tok[1].isalpha() and tok[1:].isalnum():
+            return "p"
+        if "=" in tok:
+            return "kv:" + tok.split("=", 1)[0]
+        return None
+    new_toks = (new or "").split()
+    taken = {slot(t) for t in new_toks if slot(t)}
+    out = [t for t in (old or "").split() if slot(t) not in taken]
+    for t in new_toks:
+        if t not in out:
+            out.append(t)
+    return " ".join(out)
+
+
 def write_event(svc, calendar_id: str, event_id: str, body: dict, *, replace_meta: bool = False,
                 verify: bool = True, existing: dict | None = None) -> dict:
     """Patch an event safely: cap-checked, paced, and with location + private properties merged
@@ -228,6 +249,8 @@ def write_event(svc, calendar_id: str, event_id: str, body: dict, *, replace_met
         body = {**body, "extendedProperties": {"private": {**keep, **given}}}
         if "location" not in body and existing.get("location"):
             body["location"] = existing["location"]
+        elif "location" in body and existing.get("location"):
+            body["location"] = merge_location(existing["location"], body["location"])
     pace(); ev = svc.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
     if verify and "description" in body and len(ev.get("description") or "") == DESCRIPTION_CAP and len(body["description"]) != DESCRIPTION_CAP:
         raise CapExceeded(f"event {event_id}: read-back is exactly {DESCRIPTION_CAP} chars, the truncation signature")

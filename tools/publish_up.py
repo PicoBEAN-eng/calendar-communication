@@ -1,25 +1,42 @@
 #!/usr/bin/env python3
-"""One-way publisher: Obsidian vault -> calendar (Woolly phase one, approved 2026-09-18).
+"""One-way publisher: Obsidian vault -> calendar, with FOLDER IDENTITY (agreed spec 2026-09-19,
+"Note: Folder identity for the publisher · agreed spec 2026-09-19", operator's go the same day).
 
 Obsidian is the source of truth; the calendar is a read mirror. Nothing is ever written into the vault:
-identity lives in a SIDECAR on this machine (state/publish.json: path -> key, event ids, content hash).
-A calendar-side edit to a published note is overwritten on the next pass. A deleted file deletes its
-events. A rename (same content, new path) retitles instead of recreating.
+identity lives in a SIDECAR on this machine (state/publish.json), which is a CACHE rebuildable from the
+calendar (--rebuild-sidecar) because every event carries its keys and hash in private properties.
+
+Calendar side = Frames' model exactly: a note event's location reads "<note key> p<folder key>"; a
+folder's index note carries "<folder key>" (+ "p<parent key>" when nested under another mapped folder)
+and comms_kind "folder". The two-way mirror can take over later with no migration.
 
 Config (comms.toml):
-    publish_dir    = "/path/to/vault"
-    publish_layers = ["Design=3030", "Notes=3050"]     # top-level vault folder = layer year (YYYY-01-01)
-Titles: "Note: <file stem>" (a stem seen twice gets " (<parent folder>)"). Each folder gets one dated
-index note on the index day (the only place dates appear).
-Long notes: links are expanded FIRST (glued keys, see tools/links.py), then the expanded text is
-measured; over the cap it is split at paragraph boundaries into "· part n of m" events. Files the
-operator carved by hand are just files; they are never re-flowed (an oversized carved part still
-splits, and is reported). Pictures never travel: inline <svg> bodies are dropped.
+    publish_dir     = "/path/to/vault"
+    publish_layers  = ["The Drawing Board=3030", "WoollyWorkplace/The Office=3050|Office",
+                       "- ?? ?? ????-??-??=3090|Heartbeat", "k:ab12c=3030"]
+    publish_exclude = ["WoollyWorkplace/junk"]
+A spec is a vault-relative folder path (nested allowed), a glob PATTERN (identity lives in the mapping:
+the newest matching directory by the timestamp in its name is the folder, extras are reported and
+never deleted; a label is required), or k:<folder key> once the dry run has printed the key.
+"|Label" fixes the index note's title.
 
-  publish_up.py [--apply] [--config comms.toml]      (dry run by default)
+Rename/move detection, each pass, in order: recorded path exists -> same folder; old path absent and a
+directory carries the recorded inode -> same folder (a local rename; ext4 keeps the inode); a directory
+holding a MAJORITY of the recorded notes by key (hash first, then inode), old path absent -> same folder
+(a rename from another device arrives as delete+create); else MISSING: reported, events kept, pending
+deletes listed every pass, deleted only after MISSING_PASSES consecutive misses with the events untouched
+on the calendar in that window, or on explicit unmapping (also held with the same grace).
+Notes: path, else hash, else inode, else (pattern folders) basename -> same note; new -> mint; gone ->
+delete. A rename retitles only what carries the name; a move between mapped layers rewrites the p-token.
+Never delete-and-reinsert.
+
+Long notes: links are expanded first (glued keys), then measured, then split at paragraph boundaries;
+a table split repeats its header rows per part. Pictures never travel (inline <svg> dropped).
+
+  publish_up.py [--apply] [--rebuild-sidecar] [--config comms.toml]      (dry run by default)
 """
-import argparse, hashlib, json, re, sys
-from datetime import date
+import argparse, fnmatch, hashlib, json, os, re, sys
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 CC = Path(__file__).resolve().parent.parent
@@ -29,10 +46,12 @@ import links  # noqa: E402
 
 FENCE = re.compile(r"%% vault-only %%.*?%% /vault-only %%\n?", re.S)
 SVG = re.compile(r"<svg\b.*?</svg>", re.S | re.I)
-UNSAFE_TITLE = re.compile(r"\s+")
+TABLE_SEP = re.compile(r"^\|?\s*:?-{3,}")
 WRITER = "publish_up"
-BODY_CAP = 7600          # expanded chars per event body, leaving room for the key line and a margin under 8192
+BODY_CAP = 7600
 INDEX_DAY = "3000-01-02"
+MISSING_PASSES = 3
+MAX_DEPTH = 4
 
 
 def h(text: str) -> str:
@@ -43,8 +62,24 @@ def canonical(text: str) -> str:
     return SVG.sub("[picture omitted: it is regenerated in the vault]", FENCE.sub("", text)).strip()
 
 
+def inode(p: Path):
+    try:
+        st = p.stat(); return [st.st_dev, st.st_ino]
+    except OSError:
+        return None
+
+
+def name_stamp(name: str):
+    """Sort key for pattern folders: the date and time found in the name, then the name."""
+    d = re.search(r"(\d{4})-(\d{2})-(\d{2})", name)
+    t = re.search(r"(?<!\d)(\d{2})[ :._-](\d{2})(?!\d)", name.replace(d.group(0), "") if d else name)
+    return (d.group(0) if d else "", f"{t.group(1)}:{t.group(2)}" if t else "", name)
+
+
+# ---- splitting -------------------------------------------------------------------------------
 def split_parts(text: str, cap: int) -> list:
-    """Paragraph-boundary split; a single paragraph over the cap is cut at the last newline or space."""
+    """Paragraph-boundary split; an oversized table paragraph is cut at row boundaries with its header
+    rows repeated per part; any other oversized paragraph is cut at the last newline or space."""
     parts, cur = [], ""
     for para in text.split("\n\n"):
         piece = (cur + "\n\n" + para) if cur else para
@@ -52,6 +87,16 @@ def split_parts(text: str, cap: int) -> list:
             cur = piece; continue
         if cur:
             parts.append(cur); cur = ""
+        lines = para.split("\n")
+        if len(para) > cap and len(lines) > 2 and lines[0].startswith("|") and TABLE_SEP.match(lines[1]):
+            header = lines[0] + "\n" + lines[1]
+            chunk = header
+            for row in lines[2:]:
+                if len(chunk) + 1 + len(row) > cap:
+                    parts.append(chunk); chunk = header
+                chunk += "\n" + row
+            cur = chunk
+            continue
         while len(para) > cap:
             cut = max(para.rfind("\n", 0, cap), para.rfind(" ", 0, cap))
             cut = cut if cut > cap // 2 else cap
@@ -62,110 +107,287 @@ def split_parts(text: str, cap: int) -> list:
     return parts or [""]
 
 
+# ---- sidecar ---------------------------------------------------------------------------------
 def load_state(path: Path) -> dict:
-    return json.loads(path.read_text()) if path.exists() else {}
+    if not path.exists():
+        return {"v": 2, "folders": {}, "notes": {}}
+    st = json.loads(path.read_text())
+    if "v" not in st:      # v1: flat path -> note entry
+        st = {"v": 2, "folders": {}, "notes": st}
+    return st
+
+
+def list_events(svc, cal):
+    items, page = [], None
+    while True:
+        r = svc.events().list(calendarId=cal, timeMin="2999-12-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
+                              maxResults=2500, pageToken=page).execute()
+        items += r.get("items", []); page = r.get("nextPageToken")
+        if not page:
+            return items
+
+
+def rebuild_sidecar(mine: dict) -> dict:
+    """The sidecar from the calendar alone: every event this publisher wrote carries its keys."""
+    st = {"v": 2, "folders": {}, "notes": {}}
+    for e in mine.values():
+        priv = e.get("extendedProperties", {}).get("private", {})
+        if priv.get("publish_index"):
+            fk = priv.get("publish_folder")
+            toks = (e.get("location") or "").split()
+            parent = next((t[1:] for t in toks if len(t) == 6 and t[0] == "p"), None)
+            st["folders"][fk] = {"path": priv.get("publish_path", "").rstrip("/"), "layer": priv.get("publish_layer", ""),
+                                 "label": priv.get("publish_label", ""), "parent": parent, "index_id": e["id"],
+                                 "inode": None, "spec": priv.get("publish_spec", ""), "missing": 0}
+        else:
+            rel = priv.get("publish_path")
+            if not rel:
+                continue
+            n = st["notes"].setdefault(rel, {"key": priv.get("publish_key"), "event_ids": [], "hash": priv.get("publish_hash"),
+                                             "folder": priv.get("publish_folder"), "inode": None, "title": None})
+            part = int(priv.get("publish_part") or 1)
+            while len(n["event_ids"]) < part:
+                n["event_ids"].append(None)
+            n["event_ids"][part - 1] = e["id"]
+    return st
+
+
+# ---- resolution -------------------------------------------------------------------------------
+def parse_layers(cfg) -> list:
+    out = []
+    for item in cfg["publish_layers"]:
+        spec, rest = item.split("=", 1)
+        year, _, label = rest.partition("|")
+        out.append((spec.strip(), year.strip(), label.strip()))
+    return out
+
+
+def all_dirs(vault: Path) -> list:
+    out = []
+    for p in vault.rglob("*"):
+        if p.is_dir() and not p.name.startswith(".") and len(p.relative_to(vault).parts) <= MAX_DEPTH:
+            out.append(p)
+    return out
+
+
+def notes_under(vault: Path, folder: Path, excludes: list, other_mapped: list) -> dict:
+    out = {}
+    for p in sorted(folder.rglob("*.md")):
+        rel = str(p.relative_to(vault))
+        if any(rel == x or rel.startswith(x + "/") for x in excludes):
+            continue
+        if any(rel.startswith(o + "/") for o in other_mapped):
+            continue
+        out[rel] = p
+    return out
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--rebuild-sidecar", action="store_true", help="rebuild state/publish.json from the calendar, then continue")
     ap.add_argument("--config", default=str(CC / "comms.toml"))
     a = ap.parse_args()
     dry = not a.apply
+    tag = "[dry] " if dry else ""
     cfg = cp.load_config(Path(a.config))
     if not cfg.get("publish_dir") or not cfg.get("publish_layers"):
         print("publisher is off (set publish_dir and publish_layers in comms.toml); nothing done"); return
     vault = Path(cfg["publish_dir"]).expanduser()
-    layers = dict(item.split("=", 1) for item in cfg["publish_layers"])
+    layers = parse_layers(cfg)
+    excludes = [x.strip("/") for x in (cfg.get("publish_exclude") or [])]
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     state_path = Path(cfg.get("publish_state") or (CC / "state" / "publish.json"))
-    state = load_state(state_path)
 
-    # ---- files in scope -----------------------------------------------------------------------
-    files = {}
-    for folder in layers:
-        root = vault / folder
-        if not root.is_dir():
-            print(f"missing folder {root}"); continue
-        for p in sorted(root.rglob("*.md")):
-            rel = str(p.relative_to(vault))
+    events = list_events(svc, cal)
+    mine = {e["id"]: e for e in events if e.get("extendedProperties", {}).get("private", {}).get("comms_writer") == WRITER}
+    state = rebuild_sidecar(mine) if a.rebuild_sidecar else load_state(state_path)
+    if a.rebuild_sidecar:
+        print(f"sidecar rebuilt from the calendar: {len(state['folders'])} folders, {len(state['notes'])} notes")
+    folders, notes = state["folders"], state["notes"]
+    taken = {t for e in events for t in (e.get("location") or "").split() if links.is_key(t)}
+    taken |= {v["key"] for v in notes.values() if v.get("key")} | set(folders)
+    counts = {"inserted": 0, "updated": 0, "deleted": 0, "unchanged": 0, "split": 0, "overwrote calendar edit": 0,
+              "folders renamed": 0, "notes moved": 0, "pending deletes": 0}
+    now = datetime.now(timezone.utc).isoformat()
+    dirs = all_dirs(vault)
+    dir_by_inode = {tuple(inode(d)): d for d in dirs if inode(d)}
+    problems = []
+
+    # ---- 1. resolve every mapping to a folder key + directory --------------------------------
+    resolved = {}          # fkey -> (dir Path | None, year, label, spec)
+    claimed = set()
+    for spec, year, label in layers:
+        fk = None; d = None
+        if spec.startswith("k:"):
+            fk = spec[2:]
+            if fk not in folders:
+                problems.append(f"unknown folder key in config: {spec}"); continue
+            spec = folders[fk].get("spec") or spec
+        else:
+            fk = next((k for k, f in folders.items() if f.get("spec") == spec), None)
+        is_pattern = any(ch in spec for ch in "*?[")
+        if is_pattern:
+            if not label:
+                problems.append(f"pattern mapping {spec} needs a |Label"); continue
+            matches = [x for x in dirs if fnmatch.fnmatch(str(x.relative_to(vault)), spec) and x not in claimed]
+            if matches:
+                matches.sort(key=lambda x: name_stamp(x.name))
+                d = matches[-1]
+                for extra in matches[:-1]:
+                    problems.append(f"{label}: extra directory matching the pattern left alone: {extra.relative_to(vault)}")
+        else:
+            cand = vault / spec
+            if cand.is_dir():
+                d = cand
+            elif fk and folders[fk].get("path") and (vault / folders[fk]["path"]).is_dir():
+                d = vault / folders[fk]["path"]
+        if d is None and fk:
+            f = folders[fk]
+            ino = tuple(f["inode"]) if f.get("inode") else None
+            if ino and ino in dir_by_inode and dir_by_inode[ino] not in claimed:
+                d = dir_by_inode[ino]; counts["folders renamed"] += 1
+                print(f"{tag}folder  renamed (same inode): {f['path']} -> {d.relative_to(vault)}")
+            else:
+                mine_notes = {rel: n for rel, n in notes.items() if n.get("folder") == fk}
+                if mine_notes:
+                    want_h = {n["hash"]: rel for rel, n in mine_notes.items() if n.get("hash")}
+                    want_i = {tuple(n["inode"]): rel for rel, n in mine_notes.items() if n.get("inode")}
+                    best, best_n = None, 0
+                    for x in dirs:
+                        if x in claimed:
+                            continue
+                        hit = 0
+                        for p in x.glob("*.md"):
+                            try:
+                                hh = h(canonical(p.read_text(encoding="utf-8", errors="replace")))
+                            except OSError:
+                                continue
+                            if hh in want_h or (inode(p) and tuple(inode(p)) in want_i):
+                                hit += 1
+                        if hit > best_n:
+                            best, best_n = x, hit
+                    if best is not None and best_n * 2 > len(mine_notes):
+                        d = best; counts["folders renamed"] += 1
+                        print(f"{tag}folder  moved (majority of its notes, {best_n}/{len(mine_notes)}): {f['path']} -> {d.relative_to(vault)}")
+        if fk is None:
+            fk = links.mint(taken)
+            folders[fk] = {"path": None, "layer": year, "label": label, "parent": None, "index_id": None, "inode": None,
+                           "spec": spec, "missing": 0}
+            print(f"{tag}folder  new mapping {spec} -> key {fk}")
+        f = folders[fk]; f["layer"] = year; f["label"] = label; f["spec"] = spec
+        if d is not None:
+            claimed.add(d)
+            newrel = str(d.relative_to(vault))
+            if f.get("path") and f["path"] != newrel:
+                pass   # renamed/moved: reported above; note paths are re-keyed below
+            f["path"] = newrel; f["inode"] = inode(d); f["missing"] = 0; f.pop("missing_since", None)
+        else:
+            f["missing"] = f.get("missing", 0) + 1; f.setdefault("missing_since", now)
+            problems.append(f"folder MISSING ({f['missing']}/{MISSING_PASSES}): {spec} (key {fk}, last at {f.get('path')})")
+        resolved[fk] = (d, year, label, spec)
+    # unmapped folders (in the sidecar, no longer in config) are held with the same grace
+    for fk, f in folders.items():
+        if fk not in resolved:
+            f["missing"] = f.get("missing", 0) + 1; f.setdefault("missing_since", now)
+            problems.append(f"folder UNMAPPED ({f['missing']}/{MISSING_PASSES}): {f.get('spec')} (key {fk})")
+    # parents: the longest other mapped path that prefixes this one
+    paths = {fk: f["path"] for fk, f in folders.items() if f.get("path")}
+    for fk, f in folders.items():
+        p = f.get("path") or ""
+        parent = max((ok for ok, op in paths.items() if ok != fk and p.startswith(op + "/")), key=lambda ok: len(paths[ok]), default=None)
+        f["parent"] = parent
+
+    # ---- 2. notes: identity by path, hash, inode, basename -------------------------------------
+    files = {}     # rel -> dict(folder, text, hash, inode, stem, parent)
+    for fk, (d, year, label, spec) in resolved.items():
+        if d is None:
+            continue
+        others = [op for ok, op in paths.items() if ok != fk]
+        for rel, p in notes_under(vault, d, excludes, others).items():
             raw = p.read_text(encoding="utf-8", errors="replace")
-            files[rel] = {"folder": folder, "text": canonical(raw), "stem": p.stem, "parent": p.parent.name}
-    # titles: stem, disambiguated by parent folder when a stem repeats
+            text = canonical(raw)
+            files[rel] = {"folder": fk, "text": text, "hash": h(text), "inode": inode(p), "stem": p.stem, "parent": p.parent.name,
+                          "pattern": any(ch in spec for ch in "*?[")}
+    unmatched = {rel: n for rel, n in notes.items() if rel not in files}
+    by_hash = {n["hash"]: rel for rel, n in unmatched.items() if n.get("hash")}
+    by_inode = {tuple(n["inode"]): rel for rel, n in unmatched.items() if n.get("inode")}
+    by_base = {}
+    for rel, n in unmatched.items():
+        by_base.setdefault((n.get("folder"), Path(rel).name), rel)
+    for rel, f in files.items():
+        if rel in notes:
+            continue
+        old = by_hash.get(f["hash"]) or (by_inode.get(tuple(f["inode"])) if f["inode"] else None)
+        if old is None and f["pattern"]:
+            old = by_base.get((f["folder"], Path(rel).name))
+        if old and old in notes and old not in files:
+            notes[rel] = notes.pop(old)
+            what = "moved" if notes[rel].get("folder") != f["folder"] else "renamed"
+            counts["notes moved"] += 1
+            print(f"{tag}note    {what}: {old} -> {rel}")
+        else:
+            notes[rel] = {"key": links.mint(taken), "event_ids": [], "hash": None, "folder": f["folder"], "inode": None, "title": None}
+    # titles: stem, disambiguated by parent folder when a stem repeats in the published set
     seen = {}
     for rel, f in files.items():
         seen.setdefault(f["stem"], []).append(rel)
     for rel, f in files.items():
         f["title"] = f"Note: {f['stem']}" + (f" ({f['parent']})" if len(seen[f["stem"]]) > 1 else "")
-
-    # ---- calendar-side view: everything this publisher wrote, plus every key in use ------------
-    events, page = [], None
-    while True:
-        r = svc.events().list(calendarId=cal, timeMin="2999-12-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
-                              maxResults=2500, pageToken=page).execute()
-        events += r.get("items", []); page = r.get("nextPageToken")
-        if not page:
-            break
-    taken = {t for e in events for t in (e.get("location") or "").split() if links.is_key(t)}
-    taken |= {v["key"] for v in state.values() if v.get("key")}
-    mine = {e["id"]: e for e in events if e.get("extendedProperties", {}).get("private", {}).get("comms_writer") == WRITER}
-
-    # ---- pass 1: identity for every file (rename = same hash at a new path) -------------------
-    by_hash = {v["hash"]: rel for rel, v in state.items() if rel not in files}
-    for rel, f in files.items():
-        f["hash"] = h(f["text"])
-        if rel not in state:
-            old = by_hash.pop(f["hash"], None)
-            if old:
-                state[rel] = state.pop(old); print(("[dry] " if dry else "") + f"rename  {old} -> {rel}")
-            else:
-                state[rel] = {"key": links.mint(taken), "event_ids": [], "hash": None}
-    name2key = {f["stem"]: state[rel]["key"] for rel, f in files.items()}
-    for e in events:      # the two-way mirror's notes are link targets too
+    name2key = {f["stem"]: notes[rel]["key"] for rel, f in files.items()}
+    for e in events:
         k = links.key_of(e.get("description") or "")
         if k:
             name2key.setdefault(re.sub(r"^Note:?\s*", "", e["summary"]).strip(), k)
 
-    # ---- pass 2: expand, measure, split, publish ------------------------------------------------
-    counts = {"inserted": 0, "updated": 0, "deleted": 0, "unchanged": 0, "split": 0, "overwrote calendar edit": 0}
-    missing = set()
-    by_folder_titles = {}
+    # ---- 3. publish notes ------------------------------------------------------------------------
+    missing_links = set()
+    rows = {}
     for rel, f in files.items():
-        st_ = state[rel]; key = st_["key"]
-        expanded = links.up(f["text"], name2key, missing)
+        n = notes[rel]; key = n["key"]; fk = f["folder"]
+        n["folder"] = fk; n["inode"] = f["inode"]
+        expanded = links.up(f["text"], name2key, missing_links)
         parts = split_parts(expanded, BODY_CAP)
         if len(parts) > 1:
-            counts["split"] += 1; print(f"split   {rel}: {len(expanded)} expanded chars -> {len(parts)} parts")
-        day = f"{layers[f['folder']]}-01-01"
-        titles = [f["title"] if len(parts) == 1 else f"{f['title']} · part {i + 1} of {len(parts)}" for i in range(len(parts))]
-        by_folder_titles.setdefault(f["folder"], []).append((f["title"], day, len(parts)))
+            counts["split"] += 1; print(f"{tag}split   {rel}: {len(expanded)} expanded chars -> {len(parts)} parts")
+        day = f"{folders[fk]['layer']}-01-01"
+        m = len(parts)
+        titles = [f["title"] if m == 1 else f"{f['title']} · part {i + 1} of {m}" for i in range(m)]
+        rows.setdefault(fk, []).append((f["title"], day, m))
         bodies = [p.rstrip() + "\n\n" + key + "\n" for p in parts]
-        ids = list(st_.get("event_ids") or [])
-        # trim or grow the event set to the part count
-        for eid in ids[len(parts):]:
-            print(("[dry] " if dry else "") + f"delete  extra part of {rel}")
-            if not dry:
+        ids = [i for i in (n.get("event_ids") or []) if i]
+        for eid in ids[m:]:
+            print(f"{tag}delete  extra part of {rel}")
+            if not dry and eid in mine:
                 cp.pace(); svc.events().delete(calendarId=cal, eventId=eid).execute()
             counts["deleted"] += 1
-        ids = ids[:len(parts)]
+        ids = ids[:m]
+        loc = f"{key} p{fk}"
         for i, (title, body) in enumerate(zip(titles, bodies)):
-            priv = {"comms_kind": "note", "comms_writer": WRITER, "publish_path": rel, "publish_hash": f["hash"], "publish_part": str(i + 1)}
+            priv = {"comms_kind": "note", "comms_writer": WRITER, "publish_path": rel, "publish_hash": f["hash"], "publish_part": str(i + 1),
+                    "publish_parts": str(m), "publish_key": key, "publish_folder": fk}
             ev_body = {"summary": title, "start": {"date": day}, "end": {"date": date.fromisoformat(day).replace(day=2).isoformat()},
-                       "location": key, "description": body, "extendedProperties": {"private": priv}}
+                       "location": loc, "description": body, "extendedProperties": {"private": priv}}
             cp.check_cap(body, title)
             if i < len(ids) and ids[i] in mine:
                 cur = mine[ids[i]]
-                same = (cur.get("summary") == title and (cur.get("description") or "") == body and (cur["start"].get("date") == day))
-                if same:
+                cur_priv = cur.get("extendedProperties", {}).get("private", {})
+                same = (cur.get("summary") == title and (cur.get("description") or "") == body
+                        and cur["start"].get("date") == day and (cur.get("location") or "") == loc)
+                if same and all(cur_priv.get(k) == v for k, v in priv.items()):
                     counts["unchanged"] += 1; continue
-                if st_.get("hash") == f["hash"] and (cur.get("description") or "") != body:
+                if same:      # only the bookkeeping moved (a rename or move): patch the private properties, nothing else
+                    if not dry:
+                        cp.write_event(svc, cal, ids[i], {"extendedProperties": {"private": priv}}, existing=cur, verify=False)
+                    counts["unchanged"] += 1; continue
+                if n.get("hash") == f["hash"] and (cur.get("description") or "") != body and cur.get("summary") == title:
                     counts["overwrote calendar edit"] += 1
-                print(("[dry] " if dry else "") + f"update  {title}")
+                print(f"{tag}update  {title}")
                 if not dry:
                     cp.write_event(svc, cal, ids[i], ev_body, replace_meta=True)
                 counts["updated"] += 1
             else:
-                print(("[dry] " if dry else "") + f"insert  {title} ({day})")
+                print(f"{tag}insert  {title} ({day})")
                 if not dry:
                     ev = cp.insert_event(svc, cal, ev_body)
                     if i < len(ids):
@@ -173,50 +395,83 @@ def main():
                     else:
                         ids.append(ev["id"])
                 counts["inserted"] += 1
-        st_["event_ids"] = ids; st_["hash"] = f["hash"]; st_["title"] = f["title"]
+        n["event_ids"] = ids; n["hash"] = f["hash"]; n["title"] = f["title"]
 
-    # ---- deletions: files gone from the vault -------------------------------------------------
-    for rel in [r for r in state if r not in files]:
-        for eid in state[rel].get("event_ids") or []:
-            print(("[dry] " if dry else "") + f"delete  {state[rel].get('title', rel)} (file gone)")
-            if not dry and eid in mine:
-                cp.pace(); svc.events().delete(calendarId=cal, eventId=eid).execute()
-            counts["deleted"] += 1
-        del state[rel]
+    # ---- 4. notes gone from present folders: delete -------------------------------------------
+    present = {fk for fk, (d, *_rest) in resolved.items() if d is not None}
+    for rel in [r for r in notes if r not in files]:
+        n = notes[rel]
+        if n.get("folder") in present:
+            for eid in n.get("event_ids") or []:
+                print(f"{tag}delete  {n.get('title') or rel} (file gone)")
+                if not dry and eid in mine:
+                    cp.pace(); svc.events().delete(calendarId=cal, eventId=eid).execute()
+                counts["deleted"] += 1
+            del notes[rel]
 
-    # ---- one dated index note per folder --------------------------------------------------------
-    for folder, rows in by_folder_titles.items():
-        title = f"Note: {folder} index"
-        lines = [f"Index of the {folder} folder, published one-way from Obsidian ({len(rows)} notes). "
-                 f"Open one by searching its exact title with the day pinned to the date shown; the calendar copy is read-only, "
-                 "edits belong in Obsidian.", ""]
-        lines += [f"- {t} ({d})" + (f" · {n} parts" if n > 1 else "") for t, d, n in sorted(rows)]
-        lines += ["", f"Updated {date.today().isoformat()}"]
-        body = "\n".join(lines)
-        cur = next((e for e in mine.values() if e.get("summary") == title), None)
-        if cur and (cur.get("description") or "") == body:
+    # ---- 5. missing / unmapped folders: hold, list, delete after the grace ---------------------
+    for fk in list(folders):
+        f = folders[fk]
+        if f.get("missing", 0) == 0:
             continue
-        ev_body = {"summary": title, "start": {"date": INDEX_DAY}, "end": {"date": "3000-01-03"}, "description": body,
-                   "extendedProperties": {"private": {"comms_kind": "note", "comms_writer": WRITER, "publish_path": f"{folder}/"}}}
+        held = [rel for rel, n in notes.items() if n.get("folder") == fk]
+        ids = [eid for rel in held for eid in (notes[rel].get("event_ids") or [])] + ([f["index_id"]] if f.get("index_id") else [])
+        counts["pending deletes"] += len(ids)
+        since = f.get("missing_since") or now
+        touched = [eid for eid in ids if eid in mine and mine[eid].get("updated", "") > since]
+        for eid in ids:
+            print(f"{tag}pending delete ({f['missing']}/{MISSING_PASSES}): {mine[eid]['summary'] if eid in mine else eid}")
+        if f["missing"] >= MISSING_PASSES and not touched:
+            for eid in ids:
+                print(f"{tag}delete  {mine[eid]['summary'] if eid in mine else eid} (folder gone {MISSING_PASSES} passes, untouched)")
+                if not dry and eid in mine:
+                    cp.pace(); svc.events().delete(calendarId=cal, eventId=eid).execute()
+                counts["deleted"] += 1
+            for rel in held:
+                del notes[rel]
+            del folders[fk]
+        elif touched:
+            problems.append(f"folder {f.get('spec')}: events touched on the calendar since it went missing; delete withheld")
+
+    # ---- 6. index notes: one per present folder, key in location, parent token when nested ----
+    for fk, (d, year, label, spec) in resolved.items():
+        if d is None:
+            continue
+        f = folders[fk]
+        name = label or d.name
+        title = f"Note: {name} index"
+        rws = sorted(rows.get(fk, []))
+        lines = [f"Index of the {name} folder, published one-way from Obsidian ({len(rws)} notes). "
+                 "Open one by searching its exact title with the day pinned to the date shown; the calendar copy is read-only, "
+                 "edits belong in Obsidian.", ""]
+        lines += [f"- {t} ({dd})" + (f" · {m} parts" if m > 1 else "") for t, dd, m in rws]
+        lines += ["", f"Updated {date.today().isoformat()}", "", fk]
+        body = "\n".join(lines)
+        loc = fk + (f" p{f['parent']}" if f.get("parent") else "")
+        priv = {"comms_kind": "folder", "comms_writer": WRITER, "publish_index": "1", "publish_folder": fk, "publish_path": f["path"] + "/",
+                "publish_layer": year, "publish_label": label, "publish_spec": spec}
+        ev_body = {"summary": title, "start": {"date": INDEX_DAY}, "end": {"date": "3000-01-03"}, "location": loc, "description": body,
+                   "extendedProperties": {"private": priv}}
         cp.check_cap(body, title)
-        print(("[dry] " if dry else "") + f"{'update' if cur else 'insert'}  {title}")
+        cur = mine.get(f.get("index_id")) if f.get("index_id") else next((e for e in mine.values() if e.get("summary") == title), None)
+        if cur and (cur.get("description") or "") == body and cur.get("summary") == title and (cur.get("location") or "") == loc:
+            f["index_id"] = cur["id"]; continue
+        print(f"{tag}{'update' if cur else 'insert'}  {title}")
         if not dry:
             if cur:
-                cp.write_event(svc, cal, cur["id"], ev_body, replace_meta=True)
+                cp.write_event(svc, cal, cur["id"], ev_body, replace_meta=True); f["index_id"] = cur["id"]
             else:
-                cp.insert_event(svc, cal, ev_body)
+                f["index_id"] = cp.insert_event(svc, cal, ev_body)["id"]
 
-    for e in mine.values():   # an index whose folder no longer publishes anything
-        pp = e.get("extendedProperties", {}).get("private", {}).get("publish_path", "")
-        if pp.endswith("/") and pp[:-1] not in by_folder_titles:
-            print(("[dry] " if dry else "") + f"delete  {e.get('summary')} (folder empty)")
-            if not dry:
-                cp.pace(); svc.events().delete(calendarId=cal, eventId=e["id"]).execute()
+    for pr in problems:
+        print(f"{tag}note: {pr}")
     if not dry:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(state, indent=1, ensure_ascii=False))
-    print(("[dry] " if dry else "") + f"publish pass: {len(files)} files, {counts}"
-          + (f"; {len(missing)} link targets without a key stayed name-only" if missing else ""))
+    print(f"{tag}publish pass: {len(files)} files in {len(present)} folders, {counts}"
+          + (f"; {len(missing_links)} link targets without a key stayed name-only" if missing_links else ""))
+    for fk, f in folders.items():
+        print(f"{tag}folder key {fk}: {f.get('spec')} -> {f.get('path')} (layer {f.get('layer')}{', label ' + f['label'] if f.get('label') else ''}{', parent ' + f['parent'] if f.get('parent') else ''})")
 
 
 if __name__ == "__main__":
