@@ -55,11 +55,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("code", nargs="?")
     ap.add_argument("--zodiac", default="sidereal,tropical")
-    ap.add_argument("--ayanamsa", default="skyriver")
+    ap.add_argument("--ayanamsa", default="skyriver", help="skyriver | fagan_bradley | lahiri | supersidereal")
     ap.add_argument("--houses", default="placidus,whole_sign,whole_sign_sidereal,equal,koch")
     ap.add_argument("--aspects", default="all", choices=["majors", "majors+quintiles", "all"])
     ap.add_argument("--wheel", default="tropical", choices=["tropical", "sidereal"])
     ap.add_argument("--frame")
+    ap.add_argument("--keep", action="store_true", help="a named frame kept as a standing habit: survives the nightly recycle")
     ap.add_argument("--recycle", action="store_true")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--config", default=str(CC / "comms.toml"))
@@ -70,8 +71,14 @@ def main():
 
     if a.recycle:
         events = mirror.list_future(svc, cal)
-        casts = [e for e in events if e.get("extendedProperties", {}).get("private", {}).get("comms_kind") == "cast"]
-        files = sorted((vault / CASTS_DIR).glob("*.md")) if (vault / CASTS_DIR).is_dir() else []
+        allc = [e for e in events if e.get("extendedProperties", {}).get("private", {}).get("comms_kind") == "cast"]
+        kept = [e for e in allc if e.get("extendedProperties", {}).get("private", {}).get("cast_keep")]
+        casts = [e for e in allc if e not in kept]
+        kept_keys = {links.key_of(e.get("description") or "") for e in kept}
+        files = [f for f in (sorted((vault / CASTS_DIR).glob("*.md")) if (vault / CASTS_DIR).is_dir() else [])
+                 if links.key_of(mirror.canonical(f.read_text(encoding="utf-8", errors="replace"))) not in kept_keys]
+        for e in kept:
+            print(f"{tag}kept    {e['summary']} (named frame)")
         for e in casts:
             print(f"{tag}recycle {e['summary']}")
             if not dry:
@@ -104,7 +111,7 @@ def main():
     birth_str = f"{b['day']} {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][b['month'] - 1]} {b['year']}, {b['hour']:02d}:{b['minute']:02d}, {b.get('place', '')}"
     want = None if a.aspects == "all" else (MAJORS | FIFTH if a.aspects == "majors+quintiles" else MAJORS)
     frame = frame_name(a)
-    sel = {"zodiacs": a.zodiac.split(","), "houses": houses, "aspects": want, "frame": frame}
+    sel = {"zodiacs": a.zodiac.split(","), "houses": houses, "aspects": want, "frame": frame, "keep": a.keep}
     text = charts.cast_note(given, birth_str, astro.get("chart", {}), block, sel)
 
     title = f"Note: Cast · {a.code} · {frame}"
@@ -128,7 +135,8 @@ def main():
     path = vault / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
-    priv = {"comms_kind": "cast", "comms_writer": "cast", "mirror_path": rel, "mirror_hash": mirror.h(canon), "cast_code": a.code, "cast_frame": frame}
+    priv = {"comms_kind": "cast", "comms_writer": "cast", "mirror_path": rel, "mirror_hash": mirror.h(canon), "cast_code": a.code, "cast_frame": frame,
+            "cast_keep": "1" if a.keep else ""}
     for stale in (vault / CASTS_DIR).glob("*.md"):      # an earlier render of this cast under another file name
         if stale != path and links.key_of(mirror.canonical(stale.read_text(encoding="utf-8", errors="replace"))) == key:
             stale.unlink()
