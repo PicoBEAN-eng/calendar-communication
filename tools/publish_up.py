@@ -321,7 +321,9 @@ def main():
             claimed.add(d)
             newrel = str(d.relative_to(vault))
             if f.get("path") and f["path"] != newrel:
-                pass   # renamed/moved: reported above; note paths are re-keyed below
+                if any(ch in spec for ch in "*?["):
+                    counts["folders renamed"] += 1
+                    print(f"{tag}folder  renamed (pattern re-resolved, identity from the mapping): {f['path']} -> {newrel}")
             f["path"] = newrel; f["inode"] = inode(d); f["missing"] = 0; f.pop("missing_since", None)
         else:
             f["missing"] = f.get("missing", 0) + 1; f.setdefault("missing_since", now)
@@ -364,7 +366,10 @@ def main():
             old = by_base.get((f["folder"], Path(rel).name))
         if old and old in notes and old not in files:
             notes[rel] = notes.pop(old)
-            what = "moved" if notes[rel].get("folder") != f["folder"] else "renamed"
+            old_dir, new_dir = str(Path(old).parent), str(Path(rel).parent)
+            what = ("moved" if notes[rel].get("folder") != f["folder"]
+                    else "path updated (its folder was renamed)" if old_dir != new_dir and Path(old).name == Path(rel).name
+                    else "renamed")
             counts["notes moved"] += 1
             print(f"{tag}note    {what}: {old} -> {rel}")
         else:
