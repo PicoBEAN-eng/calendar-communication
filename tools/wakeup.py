@@ -141,6 +141,11 @@ def main():
     welcome(svc, cal, cfg, today, tomorrow, len(open_todos), items, a.dry_run)
     rescue_strays(svc, cal, cfg, today, a.dry_run)
     archive_traffic(svc, cal, cfg, today, a.dry_run)
+    # Sky River casts recycle overnight (ADR-0009): rendered views are wiped so loading them is a
+    # deliberate act each day; the raw is untouched. Only where the vault mirror lives.
+    if cfg.get("mirror_dir"):
+        import subprocess as _sp
+        _sp.run([sys.executable, str(Path(__file__).parent / "cast.py"), "--recycle"] + ([] if a.dry_run else ["--apply"]), check=False)
     # ambient time-of-day routine, only where the meridian clock is installed (see meridian_day.py)
     import shutil, subprocess
     if shutil.which("tcm-clock"):
