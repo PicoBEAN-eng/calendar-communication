@@ -21,7 +21,8 @@ is snapshotted with everything else).
 comms.toml:
     down_pipe = "off" | "log" | "apply"        (default off)
     down_pipe_layers = ["3060"]
-    down_pipe_folders = ["! Active/Location Checks"]   # optional: narrow to these folder paths or keys within the layers
+    down_pipe_folders = ["! Active/Location Checks"]   # optional: narrow the whole scope to these folder paths or keys
+    down_pipe_apply_folders = ["! Active/Location Checks"]   # optional: with "apply", only these folders write; the rest of the scope logs
     down_pipe_max_lines = 50
     down_pipe_journal = "/path/to/vault/The Warehouse/Records/Down-pipe log.md"
     down_pipe_snapshot_cmd = "/home/x/woolly-workplace/bin/vault-snapshot"
@@ -229,10 +230,15 @@ def main() -> int:
             print("down_pipe_folders names no mapped folder in the allowed layers; nothing in scope"); return 0
     roots = [(vault / f["path"]).resolve() for f in allowed.values()]
     key2name = {n["key"]: Path(rel).stem for rel, n in notes.items() if n.get("key")}
+    apply_only = {x.strip("/") for x in (cfg.get("down_pipe_apply_folders") or [])}
+    def folder_mode(fk):
+        if mode != "apply":
+            return mode
+        if apply_only and not (fk in apply_only or folders[fk].get("path") in apply_only or folders[fk].get("spec") in apply_only):
+            return "log"
+        return "apply"
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    write = mode == "apply" and not a.dry_run
-    tag = {"log": "[log] ", "apply": "[dry] " if a.dry_run else ""}[mode]
     jl, total_acc, total_rej, applied_total, snap = [], 0, 0, 0, None
     for rel, n in notes.items():
         if n.get("folder") not in allowed:
@@ -244,6 +250,9 @@ def main() -> int:
             continue
         if p.is_symlink() or not any(str(rp).startswith(str(r) + os.sep) for r in roots):
             print(f"{tag}REFUSED outside scope: {rel}"); continue
+        fmode = folder_mode(n["folder"])
+        write = fmode == "apply" and not a.dry_run
+        tag = {"log": "[log] ", "apply": "[dry] " if a.dry_run else ""}[fmode]
         cal_text = read_calendar_copy(svc, cal, n, key2name)
         if cal_text is None:
             continue
@@ -254,7 +263,7 @@ def main() -> int:
         for r in rej:
             total_rej += 1
             print(f"{tag}reject  {rel}: {r['why']}: {(r['after'] or r['before'] or '')[:100]}")
-            jl.append(f"- {stamp} · {mode} · REJECT · `{rel}` · {r['why']} · `{(r['after'] or r['before'] or '')[:160]}`")
+            jl.append(f"- {stamp} · {fmode} · REJECT · `{rel}` · {r['why']} · `{(r['after'] or r['before'] or '')[:160]}`")
         if not acc:
             continue
         if total_acc + len(acc) > max_lines:
@@ -277,10 +286,10 @@ def main() -> int:
             print(f"applied {applied} line(s) to {rel}" + (f", {len(dropped)} dropped" if dropped else ""))
         else:
             for c in acc:
-                jl.append(f"- {stamp} · {mode}{' dry' if a.dry_run else ''} · WOULD {c['kind'].upper()} · `{rel}` · `{c['after'][:160]}`")
+                jl.append(f"- {stamp} · {fmode}{' dry' if a.dry_run else ''} · WOULD {c['kind'].upper()} · `{rel}` · `{c['after'][:160]}`")
     if not a.dry_run:
         journal(jpath, jl)
-    print(f"{tag}down-pipe pass ({mode}): {total_acc} accepted, {total_rej} rejected, {applied_total} applied"
+    print(f"down-pipe pass ({mode}{', apply only ' + ', '.join(sorted(apply_only)) if apply_only else ''}): {total_acc} accepted, {total_rej} rejected, {applied_total} applied"
           + (f", snapshot {snap}" if snap else ""))
     return 3 if applied_total else 0
 
