@@ -44,7 +44,7 @@ def find_person(code: str) -> dict:
 
 def frame_name(a) -> str:
     z = "+".join(a.zodiac.split(","))
-    return a.frame or f"{z} {a.ayanamsa} · {a.houses.replace(',', '+')} · {a.aspects}"
+    return a.frame or f"{z} {a.ayanamsa} · {a.carving} · {a.houses.replace(',', '+')} · {a.aspects}"
 
 
 def slug(text: str) -> str:
@@ -57,7 +57,9 @@ def main():
     ap.add_argument("--zodiac", default="sidereal,tropical")
     ap.add_argument("--ayanamsa", default="skyriver", help="skyriver | fagan_bradley | lahiri | supersidereal")
     ap.add_argument("--houses", default="placidus,whole_sign,whole_sign_sidereal,equal,koch")
-    ap.add_argument("--aspects", default="all", choices=["majors", "majors+quintiles", "all"])
+    ap.add_argument("--aspects", default="all", choices=["majors", "majors+quintiles", "all", "harmonic12"])
+    ap.add_argument("--carving", default="equal", choices=["equal", "pythagorean", "duodene"],
+                    help="how the circle is cut from the frame's zero (ADR-0010): equal 30°, 3-limit (apotome/limma), 5-limit (duodene)")
     ap.add_argument("--wheel", default="tropical", choices=["tropical", "sidereal"])
     ap.add_argument("--frame")
     ap.add_argument("--keep", action="store_true", help="a named frame kept as a standing habit: survives the nightly recycle")
@@ -98,20 +100,22 @@ def main():
     houses = [h for h in a.houses.split(",") if h]
     primary = "whole_sign" if "placidus" not in houses and "whole_sign" in houses else ("placidus" if "placidus" in houses else houses[0])
     hsys = {"whole_sign": "whole_sign"}.get(primary, "placidus")
-    astro = charts.sky_post("/sky/astrology", birth, houses=hsys, ayanamsa=a.ayanamsa)
+    zodiac = "tropical" if a.carving == "equal" else a.carving
+    astro = charts.sky_post("/sky/astrology", birth, houses=hsys, ayanamsa=a.ayanamsa, zodiac=zodiac,
+                            aspect_set="harmonic12" if a.aspects == "harmonic12" else "majors")
     if astro is None:
         sys.exit("astrology lookup failed")
     req = urllib.request.Request(f"{API}/sky/render/wheel-data",
                                  data=json.dumps({"birth": birth, "palette": "native", "houses": hsys, "ayanamsa": a.ayanamsa,
-                                                  "zodiac": a.wheel}).encode(),
+                                                  "zodiac": zodiac if a.carving != "equal" else a.wheel}).encode(),
                                  headers={"Authorization": f"Bearer {charts.API_TOKEN}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         block = json.dumps(json.loads(resp.read()), separators=(",", ":"))
     b = rec["birth"]
     birth_str = f"{b['day']} {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][b['month'] - 1]} {b['year']}, {b['hour']:02d}:{b['minute']:02d}, {b.get('place', '')}"
-    want = None if a.aspects == "all" else (MAJORS | FIFTH if a.aspects == "majors+quintiles" else MAJORS)
+    want = None if a.aspects in ("all", "harmonic12") else (MAJORS | FIFTH if a.aspects == "majors+quintiles" else MAJORS)
     frame = frame_name(a)
-    sel = {"zodiacs": a.zodiac.split(","), "houses": houses, "aspects": want, "frame": frame, "keep": a.keep}
+    sel = {"zodiacs": a.zodiac.split(","), "houses": houses, "aspects": want, "frame": frame, "keep": a.keep, "carving": a.carving}
     text = charts.cast_note(given, birth_str, astro.get("chart", {}), block, sel)
 
     title = f"Note: Cast · {a.code} · {frame}"
