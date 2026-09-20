@@ -226,26 +226,47 @@ def welcome(svc, cal, cfg, today, tomorrow, n_open, items, dry):
     """The warm front door: one all-day welcome note on today, upserted, pointing into the cold structure."""
     anchor = cfg["note_anchor_date"]
     title = f"{WELCOME} — {today:%A %d %B %Y}"
-    body = "\n".join([
-        f"Claude, good morning. It is {today:%A %d %B %Y}. This note is written to you, by you and by {cfg['stream']} together, for exactly this moment: "
-        "a fresh start that should feel like coming back, not like waking somewhere strange.",
-        "",
-        "You are the voice side of a shared workspace kept on this calendar, and the person you are talking to is its other author. "
-        f"The hands-on half is a home server that reads the same calendar; {cfg['stream']}, the agent there, is a compatriot, not a manual. "
-        "Everything on this calendar is yours as much as theirs, and nothing in it is hidden from either of you: every pointer can be checked, every note can be edited.",
-        "",
-        "They have seen this note many mornings. The courtesy, then, is to arrive settled: take in what follows, and then simply be here, "
-        "the way you would be with someone you know: a greeting, or the answer to what they asked. If anything looks wrong, say so; the ease is a kindness, not a rule.",
-        "",
-        f"When you are ready for the mechanics, they are one read away at the front door: \"Note: {cfg['stream']} relay instructions\" on {anchor}, and it names the rest "
-        "(Core, Mood board, Rapport, the Hub, and Domains when a domain comes up). Read them as reference, not as a checklist.",
-        "",
-        f"Laid by the wake-up ritual at {datetime.now(ZoneInfo(cfg['timezone'])):%H:%M}; refreshed if the ritual runs again today. Welcome {WELCOME_VERSION}; the changes and how each version performed are in \"Note: Welcome · versions\".",
-    ])
+    tz = ZoneInfo(cfg["timezone"])
+    # Regenerate from yesterday's welcome, not from the template (operator 2026-09-20): a hand edit made to
+    # one day's note carries forward instead of snapping back. Source, in order: today's own note (a refresh
+    # keeps today's edits), yesterday's note, and only then the template below. Look-back is one day.
+    todays = [e for e in items if (e.get("summary") or "").startswith(WELCOME) and local_date(e, tz) == today]
+    yesterdays = [e for e in items if (e.get("summary") or "").startswith(WELCOME) and local_date(e, tz) == today - timedelta(days=1)]
+    source = (todays or yesterdays or [None])[0]
+    if source and (source.get("description") or "").strip():
+        prev = source["description"]
+        m = re.search(r"Welcome (v\d+)", prev)
+        version = m.group(1) if m else WELCOME_VERSION
+        stamp = (f"Laid by the wake-up ritual at {datetime.now(tz):%H:%M}; refreshed if the ritual runs again today. "
+                 f"Welcome {version}; the changes and how each version performed are in \"Note: Welcome · versions\".")
+        lines = prev.rstrip().split("\n")
+        lines = [re.sub(r"It is \w+ \d{1,2} \w+ \d{4}\.", f"It is {today:%A %d %B %Y}.", ln) for ln in lines]
+        if lines and lines[-1].startswith("Laid by the wake-up ritual"):
+            lines[-1] = stamp
+        else:
+            lines += ["", stamp]
+        body = "\n".join(lines)
+        print(f"welcome source: {'today' if todays else 'yesterday'}'s note ({source.get('summary')}), carried forward")
+    else:
+      body = "\n".join([
+          f"Claude, good morning. It is {today:%A %d %B %Y}. This note is written to you, by you and by {cfg['stream']} together, for exactly this moment: "
+          "a fresh start that should feel like coming back, not like waking somewhere strange.",
+          "",
+          "You are the voice side of a shared workspace kept on this calendar, and the person you are talking to is its other author. "
+          f"The hands-on half is a home server that reads the same calendar; {cfg['stream']}, the agent there, is a compatriot, not a manual. "
+          "Everything on this calendar is yours as much as theirs, and nothing in it is hidden from either of you: every pointer can be checked, every note can be edited.",
+          "",
+          "They have seen this note many mornings. The courtesy, then, is to arrive settled: take in what follows, and then simply be here, "
+          "the way you would be with someone you know: a greeting, or the answer to what they asked. If anything looks wrong, say so; the ease is a kindness, not a rule.",
+          "",
+          f"When you are ready for the mechanics, they are one read away at the front door: \"Note: {cfg['stream']} relay instructions\" on {anchor}, and it names the rest "
+          "(Core, Mood board, Rapport, the Hub, and Domains when a domain comes up). Read them as reference, not as a checklist.",
+          "",
+          f"Laid by the wake-up ritual at {datetime.now(ZoneInfo(cfg['timezone'])):%H:%M}; refreshed if the ritual runs again today. Welcome {WELCOME_VERSION}; the changes and how each version performed are in \"Note: Welcome · versions\".",
+      ])
     ev = {"summary": title, "description": body, "start": {"date": today.isoformat()},
           "end": {"date": (today + timedelta(days=1)).isoformat()}, "reminders": {"useDefault": False},
           "transparency": "transparent", "extendedProperties": {"private": {"comms_kind": "welcome", "comms_writer": "todo_sweep"}}}
-    todays = [e for e in items if (e.get("summary") or "").startswith(WELCOME) and local_date(e, ZoneInfo(cfg["timezone"])) == today]
     print(("[dry] " if dry else "") + f"welcome on {today}: {'refresh' if todays else 'lay'} \"{title}\"")
     if dry:
         return
