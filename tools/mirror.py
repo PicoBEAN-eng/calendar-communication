@@ -367,8 +367,20 @@ def main():
         if not ev:
             sys.exit(f"no event titled {a.adopt!r} on {a.layer}")
         ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_path"] = f"{a.folder}/{file_name(ev['summary'])}"
+        body = {"extendedProperties": {"private": {"mirror_path": ev["extendedProperties"]["private"]["mirror_path"]}}}
+        # identity: a note enters the mirror with its key on the last line and in location (the structure
+        # pass only sees keyed notes); an event that already carries one keeps it
+        key = links.key_of(ev.get("description") or "")
+        if not key:
+            taken = {t for e in events for t in (e.get("location") or "").split() if links.is_key(t)}
+            taken |= {links.key_of(e.get("description") or "") for e in events} - {None}
+            key = links.mint(taken)
+            body["description"] = links.with_key(ev.get("description") or "", key)
+            body["location"] = key
+            ev["description"] = body["description"]; ev["location"] = cp.merge_location(ev.get("location") or "", key)
+            print(("[dry] " if a.dry_run else "") + f"adopt   {a.adopt}: key {key} minted")
         if not a.dry_run:
-            cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": ev["extendedProperties"]["private"]["mirror_path"]}}}, existing=ev, verify=False)
+            cp.write_event(svc, cal, ev["id"], body, existing=ev, verify=False)
 
     # ---- structure pass: parent tokens are the truth, paths are derived ------------------------
     def part_no(e):
