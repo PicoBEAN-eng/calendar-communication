@@ -359,6 +359,49 @@ def init_structure(svc, cal, vault, nodes, dry, cfg=None):
 TAKEN = set()
 
 
+def auto_adopt(svc, cal, events, cfg, dry) -> int:
+    known = {}
+    for e in events:
+        priv = e.get("extendedProperties", {}).get("private", {})
+        if priv.get("mirror_path") and priv.get("comms_kind") == "folder":
+            k = links.key_of(e.get("description") or "")
+            if k:
+                known[k] = str(Path(priv["mirror_path"]).parent)      # folder key -> its directory
+    if not known:
+        return 0
+    taken = {t for e in events for t in (e.get("location") or "").split() if links.is_key(t)}
+    taken |= {links.key_of(e.get("description") or "") for e in events} - {None}
+    n = 0
+    for e in sorted(events, key=lambda e: e.get("created", "")):
+        priv = e.get("extendedProperties", {}).get("private", {})
+        if priv.get("mirror_path") or priv.get("comms_kind") in ("cast",):
+            continue
+        title = e.get("summary") or ""
+        _, parent, classes, others = st.parse_location(e.get("location"), links.key_of(e.get("description") or ""))
+        if not parent or parent not in known:
+            continue
+        is_folder = title.rstrip().endswith("/")
+        name = st.title_name(title.rstrip().rstrip("/"))
+        key = links.key_of(e.get("description") or "") or links.mint(taken)
+        body = {}
+        if key != links.key_of(e.get("description") or ""):
+            body["description"] = links.with_key(e.get("description") or "", key)
+        body["location"] = st.format_location(key, parent, classes, others)
+        rel = f"{known[parent]}/{name}/{name}.md" if is_folder else f"{known[parent]}/{name}.md"
+        priv_new = {"mirror_path": rel, "comms_kind": "folder" if is_folder else priv.get("comms_kind", "note")}
+        if is_folder:
+            body["summary"] = title.rstrip().rstrip("/").rstrip()
+            known[key] = f"{known[parent]}/{name}"
+        body["extendedProperties"] = {"private": priv_new}
+        print(("[dry] " if dry else "") + f"adopt   {'folder ' if is_folder else ''}{title} -> {rel} (key {key}, parent {parent})")
+        if not dry:
+            cp.write_event(svc, cal, e["id"], body, existing=e, verify=False)
+        e.update({k: v for k, v in body.items() if k != "extendedProperties"})
+        e.setdefault("extendedProperties", {}).setdefault("private", {}).update(priv_new)
+        n += 1
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(CC / "comms.toml"))
@@ -373,6 +416,7 @@ def main():
     if not (a.vault or cfg.get("mirror_dir")):
         print("mirror is off for this instance (set mirror_dir in comms.toml); nothing done"); return
     vault = Path(a.vault or cfg["mirror_dir"]).expanduser()
+    st.EXCLUDE[:] = [x.strip("/") for x in (cfg.get("mirror_exclude") or [])]
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     events = list_future(svc, cal, cfg)
     if a.adopt:
@@ -394,6 +438,14 @@ def main():
             print(("[dry] " if a.dry_run else "") + f"adopt   {a.adopt}: key {key} minted")
         if not a.dry_run:
             cp.write_event(svc, cal, ev["id"], body, existing=ev, verify=False)
+
+    # ---- calendar-born notes (2026-09-22): a "Note:" event on the band with a p-token naming a known
+    # folder-note is adopted automatically: key minted if missing, mirror_path derived from the parent
+    # chain; a title ending in "/" is a new folder-note (its file sits inside its own folder). So the
+    # phone authors a note or a folder by writing a title and a parent token in the location field.
+    adopted = auto_adopt(svc, cal, events, cfg, a.dry_run)
+    if adopted:
+        print(f"{'[dry] ' if a.dry_run else ''}auto-adopted {adopted} calendar-born note(s)")
 
     # ---- structure pass: parent tokens are the truth, paths are derived ------------------------
     def part_no(e):

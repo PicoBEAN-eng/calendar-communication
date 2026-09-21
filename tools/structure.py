@@ -159,12 +159,19 @@ def _in_cycle(n: Node, nodes: dict) -> bool:
     return False
 
 
+EXCLUDE = []      # vault-relative directories the scan never reads (comms.toml mirror_exclude)
+
+
 def scan_vault(vault: Path, prefer: dict | None = None) -> dict:
     """key -> relative path of every keyed .md file in the vault (the drag detector's eyes).
-    _conflicts copies are ignored; when a key is found twice the cached path wins, else the first seen."""
+    _conflicts copies and mirror_exclude trees are ignored; when a key is found twice the cached path
+    wins, else the first seen."""
     out = {}
     for p in vault.rglob("*.md"):
         if "_conflicts" in p.parts:
+            continue
+        rel = str(p.relative_to(vault))
+        if any(rel == x or rel.startswith(x + "/") for x in EXCLUDE):
             continue
         try:
             k = links.key_of(re.sub(r"%% vault-only %%.*?%% /vault-only %%\n?", "", p.read_text(encoding="utf-8", errors="replace"), flags=re.S))
