@@ -25,6 +25,7 @@ CHART_LAYERS = {"3002": ("HD", "Human Design"), "3003": ("AST", "Astrology"),
 FOLDERS = {"3000-01-01": "Seed", "3000-01-02": "Indexes", "3001": "People", "3008": "Puddle", "3009": "Puddle",
            "3010": "Garden", "3020": "Records", "3030": "Architecture", "3040": "Rapport"}
 TERRITORY = "Calendar mirror"
+CFG = {}     # filled by main for band_floor
 SKYRIVER = "Skyriver/Charts"
 
 
@@ -45,7 +46,7 @@ def event_day(ev) -> str:
 def list_all(svc, cal):
     items, page = [], None
     while True:
-        r = svc.events().list(calendarId=cal, timeMin="3000-01-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z",
+        r = svc.events().list(calendarId=cal, timeMin=mirror.band_floor(CFG), timeMax="9999-01-01T00:00:00Z",
                               singleEvents=True, maxResults=2500, pageToken=page).execute()
         items += r.get("items", []); page = r.get("nextPageToken")
         if not page:
@@ -98,6 +99,7 @@ def main():
     a = ap.parse_args()
     dry = not a.apply
     cfg = cp.load_config(Path(a.config)); svc = cp.get_service(cfg); cal = cfg["calendar_id"]
+    CFG.update(cfg)
     vault = Path(cfg["mirror_dir"]).expanduser()
     class_keys = set(K.load(cfg).values())
 

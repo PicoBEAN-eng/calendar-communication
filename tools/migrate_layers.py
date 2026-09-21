@@ -73,7 +73,7 @@ def main():
             for rx, fn in pats:
                 out = rx.sub(fn, out)
             return out
-        events = M.list_future(svc, cal)
+        events = M.list_future(svc, cal, cfg)
         changed = 0
         for e in events:
             rel = e.get("extendedProperties", {}).get("private", {}).get("mirror_path")

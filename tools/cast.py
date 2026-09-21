@@ -156,7 +156,7 @@ CFG = {}
 
 def land(a, svc, cal, vault, dry, tag, text, title, rel, code, frame):
     cfg = CFG
-    events = mirror.list_future(svc, cal)
+    events = mirror.list_future(svc, cal, cfg)
     def is_this_cast(e):
         pv = e.get("extendedProperties", {}).get("private", {})
         return pv.get("comms_kind") == "cast" and pv.get("cast_code") == code and pv.get("cast_frame") == frame
@@ -214,7 +214,7 @@ def main():
     CFG.update(cfg)
 
     if a.recycle:
-        events = mirror.list_future(svc, cal)
+        events = mirror.list_future(svc, cal, cfg)
         allc = [e for e in events if e.get("extendedProperties", {}).get("private", {}).get("comms_kind") == "cast"]
         kept = [e for e in allc if e.get("extendedProperties", {}).get("private", {}).get("cast_keep")]
         casts = [e for e in allc if e not in kept]
@@ -264,7 +264,7 @@ def main():
 
     title = f"Note: Cast · {a.code} · {frame}"
     rel = f"{CASTS_DIR}/{mirror.file_name(given + ' · ' + frame)}"
-    events = mirror.list_future(svc, cal)
+    events = mirror.list_future(svc, cal, cfg)
     def is_this_cast(e):
         pv = e.get("extendedProperties", {}).get("private", {})
         return pv.get("comms_kind") == "cast" and pv.get("cast_code") == a.code and pv.get("cast_frame") == frame

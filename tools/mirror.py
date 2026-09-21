@@ -247,10 +247,21 @@ def dangling_blocks(vault: Path, rels) -> list:
     return out
 
 
-def list_future(svc, cal):
+def band_floor(cfg=None) -> str:
+    """The structural band starts a month before the anchor year (derived from note_anchor_date, never
+    hard-coded: the band moved from 3000 to 2040 on 2026-09-22); the ceiling stays 9999 so the traffic
+    and transcript bands are in view."""
+    try:
+        y = int(str((cfg or {}).get("note_anchor_date", "3000-01-01"))[:4])
+    except ValueError:
+        y = 3000
+    return f"{y - 1}-12-01T00:00:00Z"
+
+
+def list_future(svc, cal, cfg=None):
     items, page = [], None
     while True:
-        r = svc.events().list(calendarId=cal, timeMin="2999-12-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
+        r = svc.events().list(calendarId=cal, timeMin=band_floor(cfg), timeMax="9999-01-01T00:00:00Z", singleEvents=True,
                               maxResults=2500, pageToken=page).execute()
         items += r.get("items", []); page = r.get("nextPageToken")
         if not page:
@@ -363,7 +374,7 @@ def main():
         print("mirror is off for this instance (set mirror_dir in comms.toml); nothing done"); return
     vault = Path(a.vault or cfg["mirror_dir"]).expanduser()
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
-    events = list_future(svc, cal)
+    events = list_future(svc, cal, cfg)
     if a.adopt:
         ev = next((e for e in events if e.get("summary") == a.adopt and (e["start"].get("date") or e["start"]["dateTime"][:10]) == a.layer), None)
         if not ev:
