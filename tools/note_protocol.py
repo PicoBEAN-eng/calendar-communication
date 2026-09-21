@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE / "tools"))
 import comms_poller as cp  # noqa: E402
 
 INDEX_TITLE = "Note: Index"
@@ -106,7 +106,17 @@ def upsert(svc, cfg, existing: dict, title: str, body: str, apply: bool):
     cp.check_cap(body, title)
     if apply:
         if title in existing:
-            svc.events().update(calendarId=cfg["calendar_id"], eventId=existing[title], body=ev).execute()
+            # Regenerate the text but keep the note's identity and mirror memory (2026-09-21): the existing
+            # key line rides along on the end, and cp.write_event merges location and private properties.
+            cur = svc.events().get(calendarId=cfg["calendar_id"], eventId=existing[title]).execute()
+            import links  # noqa: PLC0415  (tools/links.py)
+            key = links.key_of(cur.get("description") or "")
+            if key:
+                ev["description"] = body.rstrip() + "\n\n" + key + "\n"
+                cp.check_cap(ev["description"], title)
+            cp.write_event(svc, cfg["calendar_id"], existing[title],
+                           {k: v for k, v in ev.items() if k != "extendedProperties"} | {"extendedProperties": {"private": {"comms_writer": "note_protocol"}}},
+                           existing=cur, verify=False)
         else:
             cp.insert_event(svc, cfg["calendar_id"], ev)
     print(f"{'' if apply else '[dry-run] '}{verb}{title}  ({len(body)} chars)")
