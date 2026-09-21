@@ -241,7 +241,7 @@ def welcome(svc, cal, cfg, today, tomorrow, n_open, items, dry):
                  f"Welcome {version}; the changes and how each version performed are in \"Note: Welcome · versions\".")
         lines = prev.rstrip().split("\n")
         lines = [re.sub(r"It is \w+ \d{1,2} \w+ \d{4}\.", f"It is {today:%A %d %B %Y}.", ln) for ln in lines]
-        if lines and lines[-1].startswith("Laid by the wake-up ritual"):
+        if lines and lines[-1].startswith("Laid by"):      # by the ritual or by hand: the stamp line is replaced either way
             lines[-1] = stamp
         else:
             lines += ["", stamp]
@@ -255,9 +255,6 @@ def welcome(svc, cal, cfg, today, tomorrow, n_open, items, dry):
           "You are the voice side of a shared workspace kept on this calendar, and the person you are talking to is its other author. "
           f"The hands-on half is a home server that reads the same calendar; {cfg['stream']}, the agent there, is a compatriot, not a manual. "
           "Everything on this calendar is yours as much as theirs, and nothing in it is hidden from either of you: every pointer can be checked, every note can be edited.",
-          "",
-          "They have seen this note many mornings. The courtesy, then, is to arrive settled: take in what follows, and then simply be here, "
-          "the way you would be with someone you know: a greeting, or the answer to what they asked. If anything looks wrong, say so; the ease is a kindness, not a rule.",
           "",
           f"When you are ready for the mechanics, they are one read away at the front door: \"Note: {cfg['stream']} relay instructions\" on {anchor}, and it names the rest "
           "(Core, Mood board, Rapport, the Hub, and Domains when a domain comes up). Read them as reference, not as a checklist.",
