@@ -117,10 +117,13 @@ def load_state(path: Path) -> dict:
     return st
 
 
-def list_events(svc, cal):
+def list_events(svc, cal, cfg=None):
+    """Every event in the stream's layer band: from the anchor year to anchor + 30 (config-derived since the
+    2026-09-22 band move; the old hard-coded 2999 floor missed every moved event and re-inserted the lot)."""
+    y = int((cfg or {}).get("note_anchor_date", "3000-01-01")[:4]) if cfg else 2999
     items, page = [], None
     while True:
-        r = svc.events().list(calendarId=cal, timeMin="2999-12-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
+        r = svc.events().list(calendarId=cal, timeMin=f"{y - 1}-12-01T00:00:00Z", timeMax=f"{y + 30}-01-01T00:00:00Z", singleEvents=True,
                               maxResults=2500, pageToken=page).execute()
         items += r.get("items", []); page = r.get("nextPageToken")
         if not page:
@@ -241,7 +244,7 @@ def main():
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     state_path = Path(cfg.get("publish_state") or (CC / "state" / "publish.json"))
 
-    events = list_events(svc, cal)
+    events = list_events(svc, cal, cfg)
     mine = {e["id"]: e for e in events if e.get("extendedProperties", {}).get("private", {}).get("comms_writer") == WRITER}
     state = rebuild_sidecar(mine) if a.rebuild_sidecar else load_state(state_path)
     if a.verify:
