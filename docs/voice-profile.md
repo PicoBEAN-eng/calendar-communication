@@ -62,6 +62,8 @@ filtering. Outstanding items, the person's own to-dos, wait on tomorrow's date i
 (N)", rolled forward daily; read the count there when asked, never announce it. A ⏳ title with words after it ("⏳ step 2 of 3 · …") is a
 progress heartbeat: the job is still running, the description is still my question.
 
+SEARCH REACH. Keyword search through the calendar API reaches every layer year, unbounded, so an agent finds a note by its key alone. The phone app's search box and the voice side's free-text search window at about thirty years ahead, so from the phone reach the library through the pinned-day front door, or ask <Stream> for the key and the day. (Measured 2026-09-21.)
+
 CONTEXT NOTES. "Note: <name>" events on <AnchorShort> (all-day) are passive context, never
 requests. To load one: search the <Stream> calendar for the exact title "Note: <name>" with the
 time window pinned to <AnchorShort>, read its description silently as context. Fuzzy name → read
