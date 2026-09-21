@@ -47,7 +47,9 @@ def normalise_html(text: str) -> str:
     """The calendar app stores an edited description as HTML: <br>/<p> for line breaks, entities, autolinked
     URLs. Bring it back to the plain text the publisher wrote so the line diff sees only the edit. A body with
     no real tags is returned untouched (angle-bracket emails and URLs in the source are not tags)."""
-    if not HTML_TAG.search(text or ""):
+    # Only a body the calendar app has HTML-ified (break/paragraph tags or a closing tag) is normalised; a lone
+    # placeholder like `<ref>` in a note's own text is not a tag and must survive untouched.
+    if not (HTML_BREAK.search(text or "") or re.search(r"</[a-zA-Z][a-zA-Z0-9-]*>", text or "")):
         return text
     t = HTML_BREAK.sub("\n", text)
     t = HTML_TAG.sub("", t)
