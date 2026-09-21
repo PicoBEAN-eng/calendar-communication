@@ -31,8 +31,16 @@ STABLE_SECONDS = 10   # the relay daemon writes files atomically; the guard only
 CAP = 7800
 
 
+FRONTMATTER_KEYS = False   # comms.toml mirror_frontmatter_keys: vault-side identity in YAML frontmatter
+                           # (key:, parent:) instead of a trailing key line (operator 2026-09-22); the
+                           # calendar side is unchanged either way. Default off: Frames' notes untouched.
+
+
 def canonical(text: str) -> str:
-    return FENCE.sub("", text).strip()
+    """The comparable content: no vault-only fences, no frontmatter, no trailing key line. Identity travels
+    beside the content (last line on the calendar, frontmatter or last line in the vault)."""
+    _, body = links.frontmatter(text or "")
+    return links.strip_key_line(FENCE.sub("", body)).strip()
 
 
 # Link registry (name <-> identity key) over every mirrored note; filled by main() before any sync.
@@ -40,7 +48,7 @@ REG = {"name2key": {}, "key2name": {}, "missing": set()}
 
 
 def register(ev, rel: str):
-    key = links.key_of(canonical(ev.get("description") or ""))
+    key = links.key_of(ev.get("description") or "")
     if not key:
         return
     for name in (re.sub(r"^Note:\s*", "", ev.get("summary", "")).strip(), Path(rel).stem):
@@ -119,8 +127,17 @@ def stable(path: Path) -> bool:
     return (datetime.now().timestamp() - path.stat().st_mtime) >= STABLE_SECONDS
 
 
-def write_file(path: Path, canon: str, keep_fences: str, dry: bool):
+def write_file(path: Path, canon: str, keep_fences: str, dry: bool, key: str | None = None, parent: str | None = None):
+    """The vault copy: content, then the surviving fences; identity as frontmatter (key, parent) when
+    mirror_frontmatter_keys is on, else the key on the last line. Other frontmatter properties already in
+    the file are carried forward."""
     body = canon.rstrip() + ("\n\n" + keep_fences.strip() + "\n" if keep_fences.strip() else "\n")
+    if key:
+        if FRONTMATTER_KEYS:
+            props = links.frontmatter(path.read_text(encoding="utf-8", errors="replace"))[0] if path.exists() else {}
+            body = links.with_frontmatter(body, key, parent, {k: v for k, v in props.items() if k not in ("key", "parent")})
+        else:
+            body = body.rstrip() + "\n\n" + key + "\n"
     print(("[dry] " if dry else "") + f"vault  <- calendar  {path.name}")
     if not dry:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,8 +148,8 @@ def write_event(svc, cal, group, canon: str, dry: bool):
     """Write a note's vault-form text to its calendar event(s): parts are created, updated and
     trimmed to match; every part carries the key line for search; titles say part n of m."""
     parts, mode = split_parts(canon)
-    key = links.key_of(canon)
     primary = group[0]
+    key = links.key_of(primary.get("description") or "")
     title = primary.get("summary") or ""
     if primary.get("extendedProperties", {}).get("private", {}).get("mirror_part"):
         title = base_title(title)       # a hand-parted title ("· part 1 of 2" as its own note) is left alone
@@ -140,7 +157,7 @@ def write_event(svc, cal, group, canon: str, dry: bool):
     bodies = []
     for i, part in enumerate(parts):
         body = links.up(part, REG["name2key"], REG["missing"])
-        if key and i < m - 1 and links.key_of(body) != key:
+        if key and links.key_of(body) != key:          # every calendar part carries the key line
             body = body.rstrip() + "\n\n" + key + "\n"
         if len(body) > cp.DESCRIPTION_CAP - 8:
             print(f"SKIP {title}: part {i + 1} is {len(body)} chars, over the cap even after splitting (flagged, never truncated)")
@@ -193,8 +210,10 @@ def mirror_one(svc, cal, vault: Path, group, rel: str, dry: bool):
     priv = ev.get("extendedProperties", {}).get("private", {})
     last = priv.get("mirror_hash")
     e_canon = group_canonical(group)   # calendar form (parts, glued keys) -> vault form
+    key = links.key_of(ev.get("description") or "")
+    parent = st.parse_location(ev.get("location"), key)[1]
     if not path.exists():
-        write_file(path, e_canon, "", dry)
+        write_file(path, e_canon, "", dry, key, parent)
         set_memory(svc, cal, group, rel, h(e_canon), dry)
         return "created in vault"
     if not stable(path):
@@ -207,7 +226,7 @@ def mirror_one(svc, cal, vault: Path, group, rel: str, dry: bool):
         return "in sync"
     he, hf = h(e_canon), h(f_canon)
     if hf == last and he != last:
-        write_file(path, e_canon, keep, dry); set_memory(svc, cal, group, rel, he, dry); return "calendar -> vault"
+        write_file(path, e_canon, keep, dry, key, parent); set_memory(svc, cal, group, rel, he, dry); return "calendar -> vault"
     if he == last and hf != last:
         if write_event(svc, cal, group, f_canon, dry):
             set_memory(svc, cal, group, rel, hf, dry)
@@ -221,7 +240,7 @@ def mirror_one(svc, cal, vault: Path, group, rel: str, dry: bool):
             set_memory(svc, cal, group, rel, hf, dry)
         return "conflict: vault won"
     conflict_save(vault, rel, raw, "vault", dry)
-    write_file(path, e_canon, keep, dry); set_memory(svc, cal, group, rel, he, dry)
+    write_file(path, e_canon, keep, dry, key, parent); set_memory(svc, cal, group, rel, he, dry)
     return "conflict: calendar won"
 
 
@@ -427,6 +446,7 @@ def main():
     ap.add_argument("--layer", help="YYYY-MM-DD of the note's layer day (with --adopt)")
     ap.add_argument("--folder", help="vault folder for that layer (with --adopt)")
     ap.add_argument("--init-structure", action="store_true", help="one-time: folder-notes + parent tokens from the cached paths")
+    ap.add_argument("--restamp", action="store_true", help="rewrite every mirrored vault file's identity in the current style (frontmatter or key line); no calendar writes")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     cfg = cp.load_config(Path(a.config))
@@ -435,6 +455,8 @@ def main():
     vault = Path(a.vault or cfg["mirror_dir"]).expanduser()
     st.EXCLUDE[:] = [x.strip("/") for x in (cfg.get("mirror_exclude") or [])]
     st.FOLDER_FILES = bool(cfg.get("mirror_folder_notes", True))
+    global FRONTMATTER_KEYS
+    FRONTMATTER_KEYS = bool(cfg.get("mirror_frontmatter_keys", False))
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     events = list_future(svc, cal, cfg)
     if a.adopt:
@@ -542,12 +564,23 @@ def main():
         new = st.with_listing(canonical(current), gen, n.key)
         if canonical(new) != canonical(current) or not path.exists():
             print(("[dry] " if a.dry_run else "") + f"listing -> both    {n.name}")
-            write_file(path, new, keep, a.dry_run)
+            write_file(path, canonical(new), keep, a.dry_run, n.key, n.parent)
             if not a.dry_run:
                 cp.write_event(svc, cal, n.ev["id"], {"description": links.up(new, REG["name2key"], REG["missing"]),
                                "extendedProperties": {"private": {"mirror_hash": h(new)}}}, existing=n.ev, verify=False)
             n.ev["description"] = new
             n.ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_hash"] = h(new)
+
+    if a.restamp:
+        n_ = 0
+        for g, rel in targets:
+            path = vault / rel
+            if not path.exists() or rel in {n.cache for n in nodes.values() if n.is_folder and not st.FOLDER_FILES}:
+                continue
+            raw = path.read_text(encoding="utf-8")
+            key = links.key_of(g[0].get("description") or ""); parent = st.parse_location(g[0].get("location"), key)[1]
+            write_file(path, canonical(raw), fences(raw), a.dry_run, key, parent); n_ += 1
+        print(("[dry] " if a.dry_run else "") + f"restamped {n_} vault files ({'frontmatter' if FRONTMATTER_KEYS else 'key line'})")
 
     # ---- content pass --------------------------------------------------------------------------
     changed = 0

@@ -220,7 +220,7 @@ def main():
         casts = [e for e in allc if e not in kept]
         kept_keys = {links.key_of(e.get("description") or "") for e in kept}
         files = [f for f in (sorted((vault / CASTS_DIR).glob("*.md")) if (vault / CASTS_DIR).is_dir() else [])
-                 if links.key_of(mirror.canonical(f.read_text(encoding="utf-8", errors="replace"))) not in kept_keys]
+                 if links.key_of(f.read_text(encoding="utf-8", errors="replace")) not in kept_keys]
         for e in kept:
             print(f"{tag}kept    {e['summary']} (named frame)")
         for e in casts:
@@ -286,7 +286,7 @@ def main():
     priv = {"comms_kind": "cast", "comms_writer": "cast", "mirror_path": rel, "mirror_hash": mirror.h(canon), "cast_code": a.code, "cast_frame": frame,
             "cast_keep": "1" if a.keep else ""}
     for stale in (vault / CASTS_DIR).glob("*.md"):      # an earlier render of this cast under another file name
-        if stale != path and links.key_of(mirror.canonical(stale.read_text(encoding="utf-8", errors="replace"))) == key:
+        if stale != path and links.key_of(stale.read_text(encoding="utf-8", errors="replace")) == key:
             stale.unlink()
     if cur:
         old_rel = cur.get("extendedProperties", {}).get("private", {}).get("mirror_path")

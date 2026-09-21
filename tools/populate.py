@@ -167,7 +167,7 @@ def main():
         mirror.REG["key2name"][key] = re.sub(r"^Note:?\s*", "", e["summary"]).strip()
     for title, day, path in plan_up:
         text = path.read_text(encoding="utf-8")
-        key = links.key_of(mirror.canonical(text)) or links.mint(taken)
+        key = links.key_of(text) or links.mint(taken)
         key_for[title] = key
         mirror.REG["name2key"][title[6:]] = key; mirror.REG["name2key"][path.stem] = key
         mirror.REG["key2name"][key] = title[6:]

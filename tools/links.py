@@ -28,10 +28,57 @@ def mint(taken: set) -> str:
             return k
 
 
+FM_RE = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*\n?", re.S)
+
+
+def frontmatter(text: str):
+    """(properties, body): a leading YAML block is the machine-owned structural layer on the vault side
+    (operator 2026-09-22); properties are flat key: value lines, unknown ones carried through untouched."""
+    m = FM_RE.match(text or "")
+    if not m:
+        return {}, text or ""
+    props = {}
+    for ln in m.group(1).splitlines():
+        if ":" in ln and not ln.startswith(" "):
+            k, v = ln.split(":", 1)
+            props[k.strip()] = v.strip().strip('"').strip("'")
+    return props, (text or "")[m.end():]
+
+
+def with_frontmatter(text: str, key: str, parent: str | None = None, extra: dict | None = None) -> str:
+    """Body with key (and parent) in frontmatter; other properties already present are kept; no key line."""
+    props, body = frontmatter(text)
+    body = strip_key_line(body)
+    props = {**props, **(extra or {})}
+    props["key"] = key
+    if parent:
+        props["parent"] = parent
+    else:
+        props.pop("parent", None)
+    lines = [f"{k}: {v}" for k, v in props.items()]
+    return "---\n" + "\n".join(lines) + "\n---\n" + body.lstrip("\n")
+
+
+def strip_key_line(text: str) -> str:
+    """The body without a trailing bare key line (identity travels separately)."""
+    lines = (text or "").rstrip().splitlines()
+    if lines and is_key(lines[-1].strip()):
+        return "\n".join(lines[:-1]).rstrip() + ("\n" if lines[:-1] else "")
+    return text or ""
+
+
 def key_of(text: str) -> str | None:
-    """The identity key: the last non-empty line, if it is a bare key."""
-    lines = [ln.strip() for ln in (text or "").rstrip().splitlines() if ln.strip()]
+    """The identity key: frontmatter `key:` first, else the last non-empty line if it is a bare key."""
+    props, body = frontmatter(text)
+    if is_key(props.get("key", "")):
+        return props["key"]
+    lines = [ln.strip() for ln in (body or "").rstrip().splitlines() if ln.strip()]
     return lines[-1] if lines and is_key(lines[-1]) else None
+
+
+def parent_of(text: str) -> str | None:
+    props, _ = frontmatter(text)
+    return props.get("parent") if is_key(props.get("parent", "")) else None
 
 
 def with_key(text: str, key: str) -> str:
