@@ -58,8 +58,13 @@ def h(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
 
+FRONTMATTER = re.compile(r"\A---\n.*?\n---\n?", re.S)
+
+
 def canonical(text: str) -> str:
-    return SVG.sub("[picture omitted: it is regenerated in the vault]", FENCE.sub("", text)).strip()
+    """The publishable body: no leading YAML frontmatter (identity and structural properties are machine-owned
+    and live in the vault only, 2026-09-22), no vault-only fences, pictures replaced by a note."""
+    return SVG.sub("[picture omitted: it is regenerated in the vault]", FENCE.sub("", FRONTMATTER.sub("", text, count=1))).strip()
 
 
 def inode(p: Path):
