@@ -160,6 +160,47 @@ def _in_cycle(n: Node, nodes: dict) -> bool:
 
 
 EXCLUDE = []      # vault-relative directories the scan never reads (comms.toml mirror_exclude)
+FOLDER_FILES = True   # comms.toml mirror_folder_notes: True = a folder is a folder-note file inside its directory
+                      # (listing above ---, prose below); False = a folder is a DIRECTORY and nothing else, the
+                      # listing lives only on the calendar event, an empty folder is an empty directory
+                      # (operator, Woolly, 2026-09-22). The key and p-token live on the event either way.
+
+
+def folder_dir_of(node) -> str:
+    return str(Path(node.derived or node.cache).parent)
+
+
+def locate_dir(node, vault: Path, nodes: dict, actual: dict):
+    """Directory-only mode: where a folder's directory actually is. Expected dir present -> as derived;
+    else the directory whose inode matches the recorded one; else the directory holding a majority of
+    the folder's own children (by their keyed files). Returns a vault-relative dir or None."""
+    exp = folder_dir_of(node)
+    if (vault / exp).is_dir():
+        return exp
+    want = node.ev.get("extendedProperties", {}).get("private", {}).get("mirror_inode")
+    kids = [c for c in nodes.values() if c.parent == node.key and not c.is_folder]
+    kid_dirs = {}
+    for c in kids:
+        a = actual.get(c.key)
+        if a:
+            kid_dirs[str(Path(a).parent)] = kid_dirs.get(str(Path(a).parent), 0) + 1
+    for d in vault.rglob("*"):
+        if not d.is_dir() or "_conflicts" in d.parts:
+            continue
+        rel = str(d.relative_to(vault))
+        if any(rel == x or rel.startswith(x + "/") for x in EXCLUDE):
+            continue
+        try:
+            st_ = d.stat()
+        except OSError:
+            continue
+        if want and [st_.st_dev, st_.st_ino] == want:
+            return rel
+    if kid_dirs:
+        best, n = max(kid_dirs.items(), key=lambda kv: kv[1])
+        if n * 2 > len(kids):
+            return best
+    return None
 
 
 def scan_vault(vault: Path, prefer: dict | None = None) -> dict:
@@ -199,6 +240,31 @@ def reconcile(nodes: dict, vault: Path, actual: dict, log) -> list:
     order = sorted(nodes.values(), key=lambda n: (not n.is_folder, (n.derived or "").count("/")))
     for n in order:
         if n.pinned or not n.derived:
+            continue
+        if n.is_folder and not FOLDER_FILES:
+            # a directory, no file: identity by expected path, then inode, then its children
+            d = locate_dir(n, vault, nodes, actual)
+            if d is None:
+                if n.derived != n.cache:
+                    actions.append(("cache", n, n.derived))
+                continue          # not there yet: created by the listing step (mkdir)
+            exp = folder_dir_of(n)
+            if d == exp:
+                n.actual = n.derived
+                if n.cache != n.derived:
+                    actions.append(("cache", n, n.derived))
+                continue
+            n.actual = f"{d}/{Path(d).name}.md"
+            dragged = str(Path(n.cache or n.derived).parent) != d
+            token_changed = n.derived != n.cache
+            if token_changed and not dragged:
+                actions.append(("move-file", n, n.derived)); continue
+            new_name, new_parent_dir = Path(d).name, str(Path(d).parent)
+            new_parent = folder_key_for_dir(new_parent_dir, nodes)
+            if new_name != n.name:
+                actions.append(("rename", n, new_name))
+            if new_parent and new_parent != n.parent and new_parent != n.key:
+                actions.append(("set-parent", n, new_parent))
             continue
         n.actual = actual.get(n.key)
         cache, derived, act = n.cache, n.derived, n.actual

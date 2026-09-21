@@ -271,12 +271,24 @@ def list_future(svc, cal, cfg=None):
 GROUPS = {}     # identity key -> [events], all parts of a note (filled by main)
 
 
-def set_cache(svc, cal, n, rel, dry):
+def set_cache(svc, cal, n, rel, dry, vault=None):
+    priv = {"mirror_path": rel}
+    if n.is_folder and not st.FOLDER_FILES and vault is not None:
+        d = vault / Path(rel).parent
+        if d.is_dir():
+            stt = d.stat(); priv["mirror_inode"] = f"[{stt.st_dev}, {stt.st_ino}]"
     for ev in GROUPS.get(n.key) or [n.ev]:      # every part of the note carries the same path
         if not dry:
-            cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": {"mirror_path": rel}}}, existing=ev, verify=False)
-        ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_path"] = rel
+            cp.write_event(svc, cal, ev["id"], {"extendedProperties": {"private": priv}}, existing=ev, verify=False)
+        ev.setdefault("extendedProperties", {}).setdefault("private", {}).update(priv)
     n.cache = rel
+
+
+def rename_folder(svc, cal, n, new_name, dry):
+    print(("[dry] " if dry else "") + f"token   <- vault   {n.name}: folder renamed -> {new_name}")
+    if not dry:
+        cp.write_event(svc, cal, n.ev["id"], {"summary": f"Note: {new_name}"}, existing=n.ev, verify=False)
+    n.ev["summary"] = f"Note: {new_name}"
 
 
 def set_parent(svc, cal, n, parent, dry):
@@ -293,6 +305,11 @@ def move_file(vault, n, rel, dry):
     print(("[dry] " if dry else "") + f"vault   <- token   {n.name}: {n.actual} -> {rel}")
     if not dry:
         if not src.exists() and dst.exists():   # already carried there by its folder's move
+            n.actual = rel; return
+        if n.is_folder and not st.FOLDER_FILES:      # a directory, no file: move the directory itself
+            dst.parent.parent.mkdir(parents=True, exist_ok=True)
+            if src.parent.exists():
+                src.parent.rename(dst.parent)
             n.actual = rel; return
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)
@@ -417,6 +434,7 @@ def main():
         print("mirror is off for this instance (set mirror_dir in comms.toml); nothing done"); return
     vault = Path(a.vault or cfg["mirror_dir"]).expanduser()
     st.EXCLUDE[:] = [x.strip("/") for x in (cfg.get("mirror_exclude") or [])]
+    st.FOLDER_FILES = bool(cfg.get("mirror_folder_notes", True))
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     events = list_future(svc, cal, cfg)
     if a.adopt:
@@ -473,16 +491,18 @@ def main():
     actions = st.reconcile(nodes, vault, actual, print)
     for kind, n, arg in actions:
         if kind == "move-file":
-            move_file(vault, n, arg, a.dry_run); set_cache(svc, cal, n, arg, a.dry_run)
+            move_file(vault, n, arg, a.dry_run); set_cache(svc, cal, n, arg, a.dry_run, vault)
         elif kind == "set-parent":
-            set_parent(svc, cal, n, arg, a.dry_run); set_cache(svc, cal, n, n.actual, a.dry_run)
+            set_parent(svc, cal, n, arg, a.dry_run); set_cache(svc, cal, n, n.actual, a.dry_run, vault)
+        elif kind == "rename":
+            rename_folder(svc, cal, n, arg, a.dry_run)
         elif kind == "cache":
-            set_cache(svc, cal, n, arg, a.dry_run)
+            set_cache(svc, cal, n, arg, a.dry_run, vault)
     if actions:
-        problems = st.derive(nodes)          # parents may have changed: re-derive before listings
+        problems = st.derive(nodes)          # parents and names may have changed: re-derive before listings
         for n in nodes.values():
             if not n.pinned and n.derived and n.cache != n.derived:
-                set_cache(svc, cal, n, n.derived, a.dry_run)
+                set_cache(svc, cal, n, n.derived, a.dry_run, vault)
     for n, why in problems:
         print(f"structure: {n.name}: {why}")
 
@@ -500,6 +520,23 @@ def main():
             continue
         gen = st.listing(n, nodes)
         path = vault / n.cache
+        if not st.FOLDER_FILES:
+            # a folder is a directory and nothing else: the listing lives on the event only
+            d = path.parent
+            if not d.is_dir():
+                print(("[dry] " if a.dry_run else "") + f"mkdir   {d.relative_to(vault)}")
+                if not a.dry_run:
+                    d.mkdir(parents=True, exist_ok=True)
+                    set_cache(svc, cal, n, n.cache, a.dry_run, vault)      # records the directory's inode
+            current = n.ev.get("description") or ""
+            new = st.with_listing(canonical(current), gen, n.key)
+            if canonical(new) != canonical(current):
+                print(("[dry] " if a.dry_run else "") + f"listing -> event   {n.name}")
+                if not a.dry_run:
+                    cp.write_event(svc, cal, n.ev["id"], {"description": links.up(new, REG["name2key"], REG["missing"]),
+                                   "extendedProperties": {"private": {"mirror_hash": h(new)}}}, existing=n.ev, verify=False)
+                n.ev["description"] = new
+            continue
         current = path.read_text(encoding="utf-8") if path.exists() else (n.ev.get("description") or "")
         keep = fences(current)
         new = st.with_listing(canonical(current), gen, n.key)
@@ -514,7 +551,10 @@ def main():
 
     # ---- content pass --------------------------------------------------------------------------
     changed = 0
+    dir_only = {n.cache for n in nodes.values() if n.is_folder and not st.FOLDER_FILES}
     for g, rel in targets:
+        if rel in dir_only:
+            continue          # a directory, no file to mirror
         res = mirror_one(svc, cal, vault, g, rel, a.dry_run)
         if res != "in sync":
             print(f"{g[0]['summary']}: {res}")
