@@ -16,7 +16,7 @@ Files whose mtime changed in the last STABLE_SECONDS are skipped (Syncthing may 
   mirror.py [--vault DIR] [--adopt TITLE --layer YYYY-MM-DD --folder NAME] [--dry-run]
 """
 import argparse, hashlib, re, sys
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
 CC = Path(__file__).resolve().parent.parent
@@ -295,7 +295,8 @@ def move_file(vault, n, rel, dry):
     n.actual = rel
 
 
-def init_structure(svc, cal, vault, nodes, dry):
+def init_structure(svc, cal, vault, nodes, dry, cfg=None):
+    cfg = cfg or {}
     """One-time migration: folder-notes for the root and every folder the caches name; p-tokens for
     every note from its cached directory. Existing notes named like their folder become the folder-note."""
     by_title = {n.ev["summary"]: n for n in nodes.values()}
@@ -312,7 +313,8 @@ def init_structure(svc, cal, vault, nodes, dry):
         if n is None:
             key = links.mint(TAKEN)
             body = f"# {name}\n\n(empty)\n\n---\n{key}\n"
-            ev = {"summary": f"Note: {name}", "start": {"date": st.FOLDER_DAY}, "end": {"date": "3000-01-03"},
+            fday = st.folder_day(cfg)
+            ev = {"summary": f"Note: {name}", "start": {"date": fday}, "end": {"date": (date.fromisoformat(fday) + timedelta(days=1)).isoformat()},
                   "location": key, "description": body,
                   "extendedProperties": {"private": {"comms_kind": "folder", "comms_writer": "mirror", "mirror_path": f"{d}/{name}.md"}}}
             print(("[dry] " if dry else "") + f"folder-note created: Note: {name} ({d})")
@@ -402,7 +404,7 @@ def main():
     for n in nodes.values():
         TAKEN.add(n.key)
     if a.init_structure:
-        init_structure(svc, cal, vault, nodes, a.dry_run)
+        init_structure(svc, cal, vault, nodes, a.dry_run, cfg)
     problems = st.derive(nodes)
     actual = st.scan_vault(vault, {k: n.cache for k, n in nodes.items()})
     actions = st.reconcile(nodes, vault, actual, print)

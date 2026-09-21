@@ -21,7 +21,12 @@ import links  # noqa: E402
 import mirror  # noqa: E402
 import charts  # noqa: E402  (tilde/charts.py: the renderer)
 
-CASTS_DAY = "3007-01-01"
+CASTS_DAY = "3007-01-01"     # default; comms.toml [layers] casts = <year> overrides (the band move derives every year from config)
+
+
+def casts_day(cfg) -> str:
+    y = (cfg.get("layers") or {}).get("casts")
+    return f"{y}-01-01" if y else CASTS_DAY
 CASTS_DIR = "Skyriver/Casts"
 API = charts.API
 MAJORS = charts.MAJOR_ASPECTS
@@ -146,7 +151,11 @@ def synastry(a, svc, cal, vault, dry, tag):
 PART_MARK = charts.PART_MARK
 
 
+CFG = {}
+
+
 def land(a, svc, cal, vault, dry, tag, text, title, rel, code, frame):
+    cfg = CFG
     events = mirror.list_future(svc, cal)
     def is_this_cast(e):
         pv = e.get("extendedProperties", {}).get("private", {})
@@ -176,10 +185,10 @@ def land(a, svc, cal, vault, dry, tag, text, title, rel, code, frame):
         for e in group:
             cp.write_event(svc, cal, e["id"], {"extendedProperties": {"private": priv}}, existing=e, verify=False)
     else:
-        ev = cp.insert_event(svc, cal, {"summary": title, "start": {"date": CASTS_DAY}, "end": {"date": "3007-01-02"}, "location": key,
+        cd = casts_day(cfg); ev = cp.insert_event(svc, cal, {"summary": title, "start": {"date": cd}, "end": {"date": cd[:-2] + "02"}, "location": key,
                                         "description": "(casting)", "extendedProperties": {"private": priv}})
         mirror.write_event(svc, cal, [ev], canon, False)
-    print(f"cast landed: {rel} and {title} on {CASTS_DAY}")
+    print(f"cast landed: {rel} and {title} on {casts_day(cfg)}")
 
 
 def main():
@@ -202,6 +211,7 @@ def main():
     dry = not a.apply; tag = "[dry] " if dry else ""
     cfg = cp.load_config(Path(a.config)); svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     vault = Path(cfg["mirror_dir"]).expanduser()
+    CFG.update(cfg)
 
     if a.recycle:
         events = mirror.list_future(svc, cal)
@@ -286,10 +296,10 @@ def main():
         for e in group:
             cp.write_event(svc, cal, e["id"], {"extendedProperties": {"private": priv}}, existing=e, verify=False)
     else:
-        ev = cp.insert_event(svc, cal, {"summary": title, "start": {"date": CASTS_DAY}, "end": {"date": "3007-01-02"}, "location": key,
+        cd = casts_day(cfg); ev = cp.insert_event(svc, cal, {"summary": title, "start": {"date": cd}, "end": {"date": cd[:-2] + "02"}, "location": key,
                                         "description": "(casting)", "extendedProperties": {"private": priv}})
         mirror.write_event(svc, cal, [ev], canon, False)
-    print(f"cast landed: {rel} and {title} on {CASTS_DAY}")
+    print(f"cast landed: {rel} and {title} on {casts_day(cfg)}")
 
 
 if __name__ == "__main__":

@@ -25,7 +25,16 @@ from pathlib import Path
 import links
 
 ROOT_NAME = "Calendar mirror"
-FOLDER_DAY = "3000-01-02"          # folder-notes file with the indexes: they are maps of contents
+FOLDER_DAY = "3000-01-02"          # default only; folder_day(cfg) derives it from note_anchor_date (+1 day)
+
+
+def folder_day(cfg) -> str:
+    """The index day: folder-notes file there, one day after the anchor (they are maps of contents)."""
+    from datetime import date, timedelta
+    try:
+        return (date.fromisoformat(cfg["note_anchor_date"]) + timedelta(days=1)).isoformat()
+    except Exception:
+        return FOLDER_DAY
 PINNED_PREFIX = "Skyriver/"
 ORPHANS, PARKED = "_orphans", "_parked"
 UNSAFE = re.compile(r'[\\/:*?"<>|#^\[\]]+')
