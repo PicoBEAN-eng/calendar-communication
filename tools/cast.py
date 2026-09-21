@@ -181,13 +181,13 @@ def land(a, svc, cal, vault, dry, tag, text, title, rel, code, frame):
         old_rel = cur.get("extendedProperties", {}).get("private", {}).get("mirror_path")
         if old_rel and old_rel != rel and (vault / old_rel).exists():
             (vault / old_rel).unlink()
-        mirror.write_event(svc, cal, group, canon, False)
+        mirror.write_event(svc, cal, group, canon, False, key)
         for e in group:
             cp.write_event(svc, cal, e["id"], {"extendedProperties": {"private": priv}}, existing=e, verify=False)
     else:
         cd = casts_day(cfg); ev = cp.insert_event(svc, cal, {"summary": title, "start": {"date": cd}, "end": {"date": cd[:-2] + "02"}, "location": key,
                                         "description": "(casting)", "extendedProperties": {"private": priv}})
-        mirror.write_event(svc, cal, [ev], canon, False)
+        mirror.write_event(svc, cal, [ev], canon, False, key)
     print(f"cast landed: {rel} and {title} on {casts_day(cfg)}")
 
 
@@ -296,13 +296,13 @@ def main():
         old_rel = cur.get("extendedProperties", {}).get("private", {}).get("mirror_path")
         if old_rel and old_rel != rel and (vault / old_rel).exists():
             (vault / old_rel).unlink()
-        mirror.write_event(svc, cal, group, canon, False)
+        mirror.write_event(svc, cal, group, canon, False, key)
         for e in group:
             cp.write_event(svc, cal, e["id"], {"extendedProperties": {"private": priv}}, existing=e, verify=False)
     else:
         cd = casts_day(cfg); ev = cp.insert_event(svc, cal, {"summary": title, "start": {"date": cd}, "end": {"date": cd[:-2] + "02"}, "location": key,
                                         "description": "(casting)", "extendedProperties": {"private": priv}})
-        mirror.write_event(svc, cal, [ev], canon, False)
+        mirror.write_event(svc, cal, [ev], canon, False, key)
     print(f"cast landed: {rel} and {title} on {casts_day(cfg)}")
 
 

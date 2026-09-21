@@ -144,12 +144,13 @@ def write_file(path: Path, canon: str, keep_fences: str, dry: bool, key: str | N
         path.write_text(body, encoding="utf-8")
 
 
-def write_event(svc, cal, group, canon: str, dry: bool):
+def write_event(svc, cal, group, canon: str, dry: bool, key: str | None = None):
     """Write a note's vault-form text to its calendar event(s): parts are created, updated and
-    trimmed to match; every part carries the key line for search; titles say part n of m."""
+    trimmed to match; every part carries the key line for search; titles say part n of m.
+    The key comes from the caller or the primary event's text (never from canon, which is identity-free)."""
     parts, mode = split_parts(canon)
     primary = group[0]
-    key = links.key_of(primary.get("description") or "")
+    key = key or links.key_of(primary.get("description") or "")
     title = primary.get("summary") or ""
     if primary.get("extendedProperties", {}).get("private", {}).get("mirror_part"):
         title = base_title(title)       # a hand-parted title ("· part 1 of 2" as its own note) is left alone
