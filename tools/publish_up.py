@@ -118,12 +118,12 @@ def load_state(path: Path) -> dict:
 
 
 def list_events(svc, cal, cfg=None):
-    """Every event in the stream's layer band: from the anchor year to anchor + 30 (config-derived since the
+    """Every event in the stream's layer band: from the anchor year minus one, open-ended above so far bands stay in (config-derived since the
     2026-09-22 band move; the old hard-coded 2999 floor missed every moved event and re-inserted the lot)."""
     y = int((cfg or {}).get("note_anchor_date", "3000-01-01")[:4]) if cfg else 2999
     items, page = [], None
     while True:
-        r = svc.events().list(calendarId=cal, timeMin=f"{y - 1}-12-01T00:00:00Z", timeMax=f"{y + 30}-01-01T00:00:00Z", singleEvents=True,
+        r = svc.events().list(calendarId=cal, timeMin=f"{y - 1}-12-01T00:00:00Z", timeMax="9999-01-01T00:00:00Z", singleEvents=True,
                               maxResults=2500, pageToken=page).execute()
         items += r.get("items", []); page = r.get("nextPageToken")
         if not page:
