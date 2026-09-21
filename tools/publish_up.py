@@ -36,7 +36,7 @@ a table split repeats its header rows per part. Pictures never travel (inline <s
   publish_up.py [--apply] [--rebuild-sidecar] [--config comms.toml]      (dry run by default)
 """
 import argparse, fnmatch, hashlib, json, os, re, sys
-from datetime import date, datetime, timezone
+from datetime import date, timedelta, datetime, timezone
 from pathlib import Path
 
 CC = Path(__file__).resolve().parent.parent
@@ -49,7 +49,7 @@ SVG = re.compile(r"<svg\b.*?</svg>", re.S | re.I)
 TABLE_SEP = re.compile(r"^\|?\s*:?-{3,}")
 WRITER = "publish_up"
 BODY_CAP = 7600
-INDEX_DAY = "3000-01-02"
+INDEX_DAY = "3000-01-02"   # default; main() derives the real value from note_anchor_date + 1 day (2026-09-22)
 MISSING_PASSES = 3
 MAX_DEPTH = 4
 
@@ -233,6 +233,9 @@ def main():
     if not cfg.get("publish_dir") or not cfg.get("publish_layers"):
         print("publisher is off (set publish_dir and publish_layers in comms.toml); nothing done"); return
     vault = Path(cfg["publish_dir"]).expanduser()
+    # The index day is the day after the stream's anchor date (config), not a constant: the band can move by config alone.
+    _anchor = date.fromisoformat(cfg.get("note_anchor_date") or "3000-01-01")
+    index_day = (_anchor + timedelta(days=1)).isoformat(); index_end = (_anchor + timedelta(days=2)).isoformat()
     layers = parse_layers(cfg)
     excludes = [x.strip("/") for x in (cfg.get("publish_exclude") or [])]
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
@@ -496,7 +499,7 @@ def main():
         loc = fk + (f" p{f['parent']}" if f.get("parent") else "")
         priv = {"comms_kind": "folder", "comms_writer": WRITER, "publish_index": "1", "publish_folder": fk, "publish_path": f["path"] + "/",
                 "publish_layer": year, "publish_label": label, "publish_spec": spec}
-        ev_body = {"summary": title, "start": {"date": INDEX_DAY}, "end": {"date": "3000-01-03"}, "location": loc, "description": body,
+        ev_body = {"summary": title, "start": {"date": index_day}, "end": {"date": index_end}, "location": loc, "description": body,
                    "extendedProperties": {"private": priv}}
         cp.check_cap(body, title)
         cur = mine.get(f.get("index_id")) if f.get("index_id") else next((e for e in mine.values() if e.get("summary") == title), None)
