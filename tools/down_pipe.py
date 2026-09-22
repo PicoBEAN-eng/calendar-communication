@@ -66,8 +66,10 @@ HEAD = re.compile(r"^#{1,6}\s")
 PLACEHOLDER = re.compile(r"^\s*[-*]\s*$")
 
 
-def classify(v: str, c: str):
-    """(kind, None) for an accepted line pair, else (None, reason)."""
+def classify(v: str, c: str, freeform: bool = False):
+    """(kind, None) for an accepted line pair, else (None, reason). In free-form folders (2026-09-22,
+    operator: the ticks-only grammar is a rail for shaky hands, not needed where a careful author writes)
+    any change to a line is accepted; the three shapes still classify so the journal keeps saying which."""
     if v == c:
         return "same", None
     mo, mc = TICK_OPEN.match(v), TICK_DONE.match(c)
@@ -77,9 +79,11 @@ def classify(v: str, c: str):
         # tick AND a number on the same line
         if (BLANK.search(mo.group(2)) or TRAILING_FIELD.search(mo.group(2))) and blank_to_number(mo.group(2), mc.group(2)):
             return "tick+number", None
-        return None, "ticked line also changed its text"
+        return ("edit", None) if freeform else (None, "ticked line also changed its text")
     if (BLANK.search(v) or TRAILING_FIELD.search(v)) and blank_to_number(v, c):
         return "number", None
+    if freeform:
+        return "edit", None
     return None, "text changed (not a tick, a number over a blank, or a note)"
 
 
@@ -113,15 +117,19 @@ def read_calendar_copy(svc, cal, entry, key2name) -> str | None:
         except Exception as e:  # noqa: BLE001
             print(f"  cannot read event {eid}: {e}"); return None
         body = normalise_html(ev.get("description") or "").rstrip()
-        if links.key_of(body):
-            body = body[: body.rfind("\n")].rstrip() if "\n" in body else ""
+        # The identity key is metadata, not content. It normally sits on the last line, but a phone edit that
+        # appends text pushes it into the middle, so drop the note's key wherever it appears on a line of its own
+        # (2026-09-22: otherwise free-form authoring writes the key into the vault body).
+        own = entry.get("key")
+        body = "\n".join(ln for ln in body.splitlines()
+                         if ln.strip() != own and not (links.is_key(ln.strip()) and ln.strip() == links.key_of(body or ""))).rstrip()
         parts.append(body)
     if not parts:
         return None
     return links.down("\n\n".join(parts), key2name)
 
 
-def diff_note(vault_text: str, cal_text: str):
+def diff_note(vault_text: str, cal_text: str, freeform: bool = False):
     """Returns (accepted: [dict], rejected: [dict]). Blank lines are ignored on both sides;
     a calendar line that duplicates an existing vault line (repeated table headers) is ignored."""
     V = [ln.rstrip() for ln in vault_text.splitlines() if ln.strip()]
@@ -135,8 +143,8 @@ def diff_note(vault_text: str, cal_text: str):
         vs, cs = V[i1:i2], C[j1:j2]
         if op == "replace" and len(vs) == len(cs):
             for v, c in zip(vs, cs):
-                kind, why = classify(v, c)
-                if kind in ("tick", "number", "tick+number"):
+                kind, why = classify(v, c, freeform)
+                if kind in ("tick", "number", "tick+number", "edit"):
                     acc.append({"kind": kind, "before": v, "after": c})
                 elif PLACEHOLDER.match(v) and section_is_notes(V, V.index(v)) and c.strip():
                     acc.append({"kind": "note", "before": v, "after": c})
@@ -144,12 +152,13 @@ def diff_note(vault_text: str, cal_text: str):
                     rej.append({"before": v, "after": c, "why": why})
             continue
         if op == "insert":
+            prev = V[i1 - 1] if i1 > 0 else None
             for c in cs:
                 if c in vset:
                     continue      # repeated table header from the part split, or an echo of an existing line
-                if section_is_notes(C, C.index(c)):
-                    anchor = V[i1 - 1] if i1 > 0 else None
-                    acc.append({"kind": "note", "before": None, "after": c, "anchor": anchor})
+                if freeform or section_is_notes(C, C.index(c)):
+                    acc.append({"kind": "note" if not freeform else "insert", "before": None, "after": c, "anchor": prev})
+                    prev = c
                 else:
                     rej.append({"before": None, "after": c, "why": "new line outside Notes"})
             continue
@@ -157,7 +166,10 @@ def diff_note(vault_text: str, cal_text: str):
             for v in vs:
                 if PLACEHOLDER.match(v) and section_is_notes(V, V.index(v)):
                     continue      # the empty "- " under Notes was consumed by a real note line
-                rej.append({"before": v, "after": None, "why": "line missing on the calendar copy"})
+                if freeform:
+                    acc.append({"kind": "delete", "before": v, "after": None})
+                else:
+                    rej.append({"before": v, "after": None, "why": "line missing on the calendar copy"})
             continue
         # replace with unequal counts: a Notes placeholder growing into lines, else pairwise, the rest rejected
         placeholders = [v for v in vs if PLACEHOLDER.match(v) and section_is_notes(V, V.index(v))]
@@ -173,13 +185,16 @@ def diff_note(vault_text: str, cal_text: str):
         for k in range(max(len(vs), len(cs))):
             v = vs[k] if k < len(vs) else None; c = cs[k] if k < len(cs) else None
             if v is not None and c is not None:
-                kind, why = classify(v, c)
-                if kind in ("tick", "number", "tick+number"):
+                kind, why = classify(v, c, freeform)
+                if kind in ("tick", "number", "tick+number", "edit"):
                     acc.append({"kind": kind, "before": v, "after": c}); continue
             if c is not None and c in vset:
                 continue
-            if c is not None and v is None and section_is_notes(C, C.index(c)):
-                acc.append({"kind": "note", "before": None, "after": c, "anchor": cs[k - 1] if k > 0 else None}); continue
+            if c is not None and v is None and (freeform or section_is_notes(C, C.index(c))):
+                acc.append({"kind": "insert" if freeform else "note", "before": None, "after": c,
+                            "anchor": (cs[k - 1] if k > 0 else (V[i1 - 1] if i1 > 0 else None))}); continue
+            if v is not None and c is None and freeform:
+                acc.append({"kind": "delete", "before": v, "after": None}); continue
             rej.append({"before": v, "after": c, "why": "block edit (not a tick, number or note)"})
     return acc, rej
 
@@ -190,12 +205,27 @@ def apply_to_file(path: Path, accepted: list) -> tuple[int, list]:
     lines = raw.split("\n")
     applied, dropped = 0, []
     for ch in accepted:
-        if ch["kind"] in ("tick", "number", "tick+number", "note") and ch.get("before") is not None:
+        if ch["kind"] == "delete":
+            try:
+                i = next(i for i, ln in enumerate(lines) if ln.rstrip() == ch["before"])
+            except StopIteration:
+                dropped.append(ch); continue
+            del lines[i]; applied += 1
+        elif ch.get("before") is not None and ch["kind"] in ("tick", "number", "tick+number", "note", "edit"):
             try:
                 i = next(i for i, ln in enumerate(lines) if ln.rstrip() == ch["before"])
             except StopIteration:
                 dropped.append(ch); continue
             lines[i] = ch["after"]; applied += 1
+        elif ch["kind"] == "insert":
+            idx = None
+            if ch.get("anchor") is not None:
+                idx = next((i for i, ln in enumerate(lines) if ln.rstrip() == ch["anchor"]), None)
+            if idx is None:
+                lines.append(ch["after"])
+            else:
+                lines.insert(idx + 1, ch["after"])
+            applied += 1
         elif ch["kind"] == "note":
             # insert after the anchor line if present, else at the end of the Notes section
             idx = None
@@ -256,6 +286,10 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
     key2name = {n["key"]: Path(rel).stem for rel, n in notes.items() if n.get("key")}
     name2key = {stem: key for key, stem in key2name.items()}
     apply_only = {x.strip("/") for x in (cfg.get("down_pipe_apply_folders") or [])}
+    freeform_set = {x.strip("/") for x in (cfg.get("down_pipe_freeform_folders") or [])}
+    def is_freeform(fk):
+        f = folders[fk]
+        return bool(freeform_set) and (fk in freeform_set or f.get("path") in freeform_set or f.get("spec") in freeform_set)
     def folder_mode(fk):
         if mode != "apply":
             return mode
@@ -289,7 +323,16 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
         rendered = links.down("\n\n".join(pub.split_parts(links.up(vault_text, name2key), pub.BODY_CAP)), key2name)
         if pub.h(cal_text.strip()) in (n.get("hash"), pub.h(rendered.strip())):
             continue      # the calendar copy is exactly what was published (or what would be now): no phone edit
-        acc, rej = diff_note(rendered, cal_text)
+        free = is_freeform(n["folder"])
+        if free and n.get("hash") and pub.h(vault_text.strip()) != n["hash"]:
+            # The vault moved since this note was last published, so the calendar copy is stale: diffing against
+            # it would read the vault's new lines as deletions and revert them. Wait for the publisher to
+            # re-render (it runs right after, in the same pass) — the vault always wins on content.
+            print(f"{tag}stale   {rel}: vault changed since the last publish; skipped until the calendar copy is re-rendered")
+            jl.append(f"- {stamp} · {fmode} · STALE · `{rel}` · the vault changed since this note was published, so the "
+                      f"calendar copy was not applied; the vault wins and the publisher will re-render it")
+            continue
+        acc, rej = diff_note(rendered, cal_text, free)
         if not acc and not rej:
             continue
         for r in rej:
@@ -302,7 +345,7 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
             print(f"{tag}CAP {max_lines} lines per pass reached; the rest waits for the next pass"); break
         total_acc += len(acc)
         for c in acc:
-            print(f"{tag}accept  {rel}: {c['kind']}: {c['after'][:100]}")
+            print(f"{tag}accept  {rel}: {c['kind']}: {(c['after'] or c['before'] or '')[:100]}")
         if write:
             if snap is None and snap_cmd:
                 r = subprocess.run(snap_cmd, shell=True, capture_output=True, text=True)
@@ -314,16 +357,17 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
                 if c in dropped:
                     jl.append(f"- {stamp} · apply · DROPPED (line no longer in the vault) · `{rel}` · `{(c['before'] or c['after'])[:160]}`")
                 else:
-                    jl.append(f"- {stamp} · apply · {c['kind'].upper()} · `{rel}` · before `{(c['before'] or '')[:120]}` · after `{c['after'][:120]}`")
+                    jl.append(f"- {stamp} · apply · {c['kind'].upper()} · `{rel}` · before `{(c['before'] or '')[:120]}` · after `{(c['after'] or '')[:120]}`")
             print(f"applied {applied} line(s) to {rel}" + (f", {len(dropped)} dropped" if dropped else ""))
         else:
             for c in acc:
-                jl.append(f"- {stamp} · {fmode}{' dry' if a.dry_run else ''} · WOULD {c['kind'].upper()} · `{rel}` · `{c['after'][:160]}`")
+                jl.append(f"- {stamp} · {fmode}{' dry' if a.dry_run else ''} · WOULD {c['kind'].upper()} · `{rel}` · `{(c['after'] or c['before'] or '')[:160]}`")
     if not a.dry_run:
         journal(jpath, jl)
     if only_rels is not None and not total_acc and not total_rej:
         return 0
-    print(f"down-pipe pass ({mode}{', apply only ' + ', '.join(sorted(apply_only)) if apply_only else ''}): {total_acc} accepted, {total_rej} rejected, {applied_total} applied"
+    print(f"down-pipe pass ({mode}{', apply only ' + ', '.join(sorted(apply_only)) if apply_only else ''}"
+          f"{'; free-form: ' + ', '.join(sorted(freeform_set)) if freeform_set else ''}): {total_acc} accepted, {total_rej} rejected, {applied_total} applied"
           + (f", snapshot {snap}" if snap else ""))
     return applied_total
 
