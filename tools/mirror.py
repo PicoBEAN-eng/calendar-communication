@@ -396,19 +396,46 @@ def init_structure(svc, cal, vault, nodes, dry, cfg=None):
 TAKEN = set()
 
 
+def recent_notes(svc, cal, days=7):
+    """"Note:" events on recent real dates: the phone's default date is today, so a note authored there
+    lands on today, not on a layer day; the born path moves it onto its folder's day (2026-09-22)."""
+    lo = (date.today() - timedelta(days=days)).isoformat() + "T00:00:00Z"
+    hi = (date.today() + timedelta(days=2)).isoformat() + "T00:00:00Z"
+    r = svc.events().list(calendarId=cal, timeMin=lo, timeMax=hi, singleEvents=True, maxResults=250).execute()
+    return [e for e in r.get("items", []) if re.match(r"^Note:?\s", e.get("summary", ""))
+            and not e.get("extendedProperties", {}).get("private", {}).get("mirror_path")]
+
+
 def auto_adopt(svc, cal, events, cfg, dry) -> int:
-    known = {}
+    known, day_of = {}, {}
     for e in events:
         priv = e.get("extendedProperties", {}).get("private", {})
         if priv.get("mirror_path") and priv.get("comms_kind") == "folder":
             k = links.key_of(e.get("description") or "")
             if k:
                 known[k] = str(Path(priv["mirror_path"]).parent)      # folder key -> its directory
+                day_of[k] = e["start"].get("date") or e["start"].get("dateTime", "")[:10]
     if not known:
-        return 0
+        return []
+    # a folder's LAYER day is where its notes sit (the folder-note itself lives on the index day)
+    kid_days = {}
+    for e in events:
+        priv = e.get("extendedProperties", {}).get("private", {})
+        if priv.get("mirror_path") and priv.get("comms_kind") != "folder":
+            _, par, _, _ = st.parse_location(e.get("location"), links.key_of(e.get("description") or ""))
+            if par in known:
+                d = e["start"].get("date") or e["start"].get("dateTime", "")[:10]
+                kid_days.setdefault(par, {}); kid_days[par][d] = kid_days[par].get(d, 0) + 1
+    for k, days in kid_days.items():
+        day_of[k] = max(days.items(), key=lambda kv: kv[1])[0]
+    try:
+        recent = recent_notes(svc, cal)
+    except Exception as ex:      # never let the born path break the pass
+        print(f"recent-notes lookup failed: {ex}"); recent = []
+    events = list(events) + recent
+    adopted = []
     taken = {t for e in events for t in (e.get("location") or "").split() if links.is_key(t)}
     taken |= {links.key_of(e.get("description") or "") for e in events} - {None}
-    n = 0
     for e in sorted(events, key=lambda e: e.get("created", "")):
         priv = e.get("extendedProperties", {}).get("private", {})
         if priv.get("mirror_path") or priv.get("comms_kind") in ("cast",):
@@ -424,6 +451,13 @@ def auto_adopt(svc, cal, events, cfg, dry) -> int:
         if key != links.key_of(e.get("description") or ""):
             body["description"] = links.with_key(e.get("description") or "", key)
         body["location"] = st.format_location(key, parent, classes, others)
+        # a note born on a real date (the phone's default) moves onto its folder's layer day, all-day;
+        # a timed event needs dateTime and timeZone cleared explicitly (a plain date patch fails silently)
+        day = e["start"].get("date") or e["start"].get("dateTime", "")[:10]
+        target = day_of.get(parent)
+        if target and day != target:
+            body["start"] = {"date": target, "dateTime": None, "timeZone": None}
+            body["end"] = {"date": (date.fromisoformat(target) + timedelta(days=1)).isoformat(), "dateTime": None, "timeZone": None}
         rel = f"{known[parent]}/{name}/{name}.md" if is_folder else f"{known[parent]}/{name}.md"
         priv_new = {"mirror_path": rel, "comms_kind": "folder" if is_folder else priv.get("comms_kind", "note")}
         if is_folder:
@@ -435,8 +469,8 @@ def auto_adopt(svc, cal, events, cfg, dry) -> int:
             cp.write_event(svc, cal, e["id"], body, existing=e, verify=False)
         e.update({k: v for k, v in body.items() if k != "extendedProperties"})
         e.setdefault("extendedProperties", {}).setdefault("private", {}).update(priv_new)
-        n += 1
-    return n
+        adopted.append(e)
+    return adopted
 
 
 def main():
@@ -486,7 +520,8 @@ def main():
     # phone authors a note or a folder by writing a title and a parent token in the location field.
     adopted = auto_adopt(svc, cal, events, cfg, a.dry_run)
     if adopted:
-        print(f"{'[dry] ' if a.dry_run else ''}auto-adopted {adopted} calendar-born note(s)")
+        print(f"{'[dry] ' if a.dry_run else ''}auto-adopted {len(adopted)} calendar-born note(s)")
+        events += [e for e in adopted if e not in events]      # born on a real date: now part of the band
 
     # ---- structure pass: parent tokens are the truth, paths are derived ------------------------
     def part_no(e):
