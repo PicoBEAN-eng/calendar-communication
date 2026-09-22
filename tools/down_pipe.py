@@ -350,8 +350,19 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
             key = links.mint(taken)
             notes[rel] = {"key": key, "event_ids": [ev["id"]], "hash": None, "folder": fk, "inode": None, "title": None}
             newpriv = {"comms_kind": "note", "comms_writer": pub.WRITER, "publish_path": rel, "publish_key": key, "publish_folder": fk}
-            cp.write_event(svc, cal, ev["id"], {"summary": f"Note: {stem}", "location": f"{key} p{fk}",
+            # the adopted event moves onto the folder's layer day (all-day), where the publisher lists and owns it;
+            # left on the phone's real date it would sit outside the publisher's window and be re-inserted
+            from datetime import date as _dd, timedelta as _tdd
+            day = f"{folders[fk]['layer']}-01-01"; nxt = (_dd.fromisoformat(day) + _tdd(days=1)).isoformat()
+            try:
+              cp.write_event(svc, cal, ev["id"], {"summary": f"Note: {stem}", "location": f"{key} p{fk}",
+                                                 "start": {"date": day, "dateTime": None, "timeZone": None},
+                                                 "end": {"date": nxt, "dateTime": None, "timeZone": None}, "reminders": {"useDefault": False},
+                                                 "transparency": "transparent",
                                                  "extendedProperties": {"private": newpriv}}, existing=ev, verify=False)
+            except Exception as ex:  # noqa: BLE001
+                print(f"born    {rel}: could not adopt event {ev['id']} ({str(ex)[:120]}); the publisher will give the note its own copy")
+                notes[rel]["event_ids"] = []
             jl.append(f"- {stamp} · apply · BORN · `{rel}` · from calendar event {ev['id']} (key {key}, parent {fk})"
                       + (" · trailing slash ignored: a publisher folder cannot make sub-folders from the calendar" if was_folder else ""))
             if was_folder:
