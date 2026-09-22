@@ -61,6 +61,26 @@ def h(text: str) -> str:
 FRONTMATTER = re.compile(r"\A---\n.*?\n---\n?", re.S)
 
 
+def stamp_identity(path: Path, key: str, parent: str, dry: bool) -> bool:
+    """Write key:/parent: into the vault note's frontmatter (operator 2026-09-22: identity is machine-owned
+    metadata and lives in the vault too). Other properties are carried forward untouched; the body is not
+    rewritten. Returns True if the file changed."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    props, body = links.frontmatter(raw)
+    if props.get("key") == key and props.get("parent") == parent:
+        return False
+    m = FRONTMATTER.match(raw)
+    kept = [ln for ln in (m.group(0).strip("-\n").splitlines() if m else [])
+            if not re.match(r"^(key|parent)\s*:", ln)]
+    block = "---\n" + "\n".join([f"key: {key}", f"parent: {parent}"] + kept) + "\n---\n"
+    if not dry:
+        path.write_text(block + body, encoding="utf-8")
+    return True
+
+
 def canonical(text: str) -> str:
     """The publishable body: no leading YAML frontmatter (identity and structural properties are machine-owned
     and live in the vault only, 2026-09-22), no vault-only fences, pictures replaced by a note."""
@@ -385,6 +405,12 @@ def main():
             print(f"{tag}note    {what}: {old} -> {rel}")
         else:
             notes[rel] = {"key": links.mint(taken), "event_ids": [], "hash": None, "folder": f["folder"], "inode": None, "title": None}
+    # identity into the vault: every published note carries its key and parent in frontmatter (stamped once;
+    # a note that already has them is left alone; the canonical text strips the block so hashes do not move)
+    for rel, f in files.items():
+        if stamp_identity(vault / rel, notes[rel]["key"], f["folder"], dry):
+            print(f"{tag}stamp   {rel}: key {notes[rel]['key']} parent {f['folder']} into frontmatter")
+            f["text"] = canonical((vault / rel).read_text(encoding="utf-8", errors="replace")) if not dry else f["text"]
     # titles: stem, disambiguated by parent folder when a stem repeats in the published set
     seen = {}
     for rel, f in files.items():

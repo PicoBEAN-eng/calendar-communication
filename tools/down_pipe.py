@@ -295,6 +295,72 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
     svc = svc or cp.get_service(cfg); cal = cfg["calendar_id"]
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     jl, total_acc, total_rej, applied_total, snap = [], 0, 0, 0, None
+
+    # ---- calendar-born notes in PUBLISHER folders (2026-09-22, operator's ACH workflow) -------------------
+    # A "Note: <title>" event on a down-pipe layer day that no writer owns, whose location names one of the
+    # allowed publisher folders (p<folder key>, or the bare folder key), becomes a vault file in that folder
+    # and the SAME event is adopted as the note's calendar copy (no duplicate). A trailing "/" on the title is
+    # the mirror's folder marker; here a folder cannot be created (publisher folders are mapped in config), so
+    # it is stripped and reported. If the file already exists, the vault body wins and the event is adopted.
+    born = 0
+    tag = "[dry] " if a.dry_run else ""
+    if mode == "apply" and not a.dry_run:
+        state_path = Path(cfg.get("publish_state") or (CC / "state" / "publish.json"))
+        pubevs = pub.list_events(svc, cal, cfg)
+        # the phone's default day is today, so "Note:" events on recent real dates are candidates too
+        from datetime import date as _d, timedelta as _td
+        cp.pace(); recent = svc.events().list(calendarId=cal, timeMin=f"{_d.today() - _td(days=7)}T00:00:00Z",
+                                              timeMax=f"{_d.today() + _td(days=2)}T00:00:00Z", singleEvents=True, maxResults=250).execute().get("items", [])
+        seen_ids = {e["id"] for e in pubevs}
+        pubevs = pubevs + [e for e in recent if e["id"] not in seen_ids]
+        taken = {t for e in pubevs for t in (e.get("location") or "").split() if links.is_key(t)}
+        taken |= {v["key"] for v in notes.values() if v.get("key")} | set(folders)
+        for ev in pubevs:
+            priv = (ev.get("extendedProperties") or {}).get("private") or {}
+            title = (ev.get("summary") or "").strip()
+            if priv.get("comms_writer") or priv.get("comms_state") or not re.match(r"^Note:\s*\S", title):
+                continue
+            toks = (ev.get("location") or "").split()
+            fk = next((t[1:] for t in toks if t.startswith("p") and t[1:] in allowed), None) \
+                 or next((t for t in toks if t in allowed), None)
+            if not fk or folder_mode(fk) != "apply":
+                continue
+            was_folder = title.endswith("/")
+            stem = re.sub(r"^Note:\s*", "", title).rstrip("/").strip()
+            stem = re.sub(r'[\\/:*?"<>|#^\[\]]+', "-", stem)
+            rel = f"{folders[fk]['path']}/{stem}.md"; target = vault / rel
+            if rel in notes:
+                # the note already exists and has its own calendar copy: this event is a duplicate author copy
+                if ev["id"] not in (notes[rel].get("event_ids") or []):
+                    cp.write_event(svc, cal, ev["id"], {"summary": f"✓ {title.rstrip('/')} — landed in the vault; the published copy is on the {folders[fk]['layer']} layer, this one can be deleted",
+                                                         "extendedProperties": {"private": {"comms_kind": "reply", "comms_state": "done", "comms_writer": "inbox"}}}, existing=ev, verify=False)
+                    print(f"{tag}born    {rel}: already published; the author's copy {ev['id']} marked as landed")
+                    jl.append(f"- {stamp} · apply · BORN-DUP · `{rel}` · author event {ev['id']} marked landed (published copy exists)")
+                continue
+            body = links.down(links.strip_key_line(normalise_html(ev.get("description") or "")), key2name).rstrip() + "\n"
+            if target.exists():
+                print(f"{tag}born    {rel}: file already exists, vault body kept; event adopted as its calendar copy")
+            else:
+                if snap is None and snap_cmd:
+                    r = subprocess.run(snap_cmd, shell=True, capture_output=True, text=True)
+                    snap = (r.stdout.strip().splitlines() or ["snapshot"])[-1]
+                    jl.append(f"- {stamp} · apply · SNAPSHOT before writes · {snap}")
+                target.parent.mkdir(parents=True, exist_ok=True); target.write_text(body, encoding="utf-8")
+                print(f"{tag}born    {rel}: created from the calendar ({len(body)} chars)")
+            key = links.mint(taken)
+            notes[rel] = {"key": key, "event_ids": [ev["id"]], "hash": None, "folder": fk, "inode": None, "title": None}
+            newpriv = {"comms_kind": "note", "comms_writer": pub.WRITER, "publish_path": rel, "publish_key": key, "publish_folder": fk}
+            cp.write_event(svc, cal, ev["id"], {"summary": f"Note: {stem}", "location": f"{key} p{fk}",
+                                                 "extendedProperties": {"private": newpriv}}, existing=ev, verify=False)
+            jl.append(f"- {stamp} · apply · BORN · `{rel}` · from calendar event {ev['id']} (key {key}, parent {fk})"
+                      + (" · trailing slash ignored: a publisher folder cannot make sub-folders from the calendar" if was_folder else ""))
+            if was_folder:
+                print(f"{tag}born    {rel}: the title's trailing slash was ignored (folders are not made this way here)")
+            born += 1
+        if born:
+            state_path.write_text(json.dumps(state, indent=1, ensure_ascii=False))
+            print(f"calendar-born: {born} note(s) registered; the publisher renders them on its next pass")
+
     for rel, n in notes.items():
         if n.get("folder") not in allowed:
             continue
