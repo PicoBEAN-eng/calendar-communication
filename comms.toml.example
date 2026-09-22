@@ -20,7 +20,7 @@ reply_buzz_popup_minutes = 10           # one popup of this length (lingers inst
 note_anchor_date = "2000-01-01"         # events on this date, or titled "Note: …", are context notes: never claimed
 wakeup_ritual = false                   # true: tools/wakeup.py writes the daily welcome note, outstanding digest and stray rescue on this calendar
 # mirror_dir = "/home/you/vault-or-relay-space"   # set: tools/mirror.py mirrors notes carrying mirror_path two-way into this directory (comms-mirror.timer, settle loop)
-# journal_dir = "/home/you/calendar-journal"   # set: tools/journal_export.py renders Note: events + finished threads into this Obsidian vault (one-way, 15-min timer)
+# (journal exporter removed 2026-09-22: the mirror and the publisher carry notes to vaults now)
 backfill_hours = 0                      # very first poll only: how far back to look for requests (0 = from now)
 
 # --- gear (model + effort) and the sequencer ---------------------------------------------
