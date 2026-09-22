@@ -601,11 +601,10 @@ def main():
         if canonical(new) != canonical(current) or not path.exists():
             print(("[dry] " if a.dry_run else "") + f"listing -> both    {n.name}")
             write_file(path, canonical(new), keep, a.dry_run, n.key, n.parent)
-            if not a.dry_run:
-                cp.write_event(svc, cal, n.ev["id"], {"description": links.up(new, REG["name2key"], REG["missing"]),
-                               "extendedProperties": {"private": {"mirror_hash": h(new)}}}, existing=n.ev, verify=False)
-            n.ev["description"] = new
-            n.ev.setdefault("extendedProperties", {}).setdefault("private", {})["mirror_hash"] = h(new)
+            # the calendar side goes through the part-aware writer: a big folder listing crosses as parts
+            group = GROUPS.get(n.key) or [n.ev]
+            if write_event(svc, cal, group, canonical(new), a.dry_run, key=n.key):
+                set_memory(svc, cal, group, n.cache, h(canonical(new)), a.dry_run)
 
     if a.restamp:
         n_ = 0
