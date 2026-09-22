@@ -127,13 +127,21 @@ def main():
              "transparency": "transparent", "extendedProperties": {"private": {"comms_kind": "digest", "comms_writer": "todo_sweep"}}}
     print(("[dry] " if a.dry_run else "") + f"digest on {tomorrow}: {len(open_todos)} open")
     if not a.dry_run:
-        cp.check_cap(dbody["description"], "outstanding digest")
-        if digests:
-            svc.events().update(calendarId=cal, eventId=digests[0]["id"], body=dbody).execute()
-            for extra in digests[1:]:
-                svc.events().delete(calendarId=cal, eventId=extra["id"]).execute()
+        if not open_todos:
+            # nothing outstanding: no digest at all (an empty "Outstanding (0)" every day is clutter, 2026-09-22);
+            # an existing digest from a fuller day is removed so tomorrow carries only real work
+            for extra in digests:
+                cp.pace(); svc.events().delete(calendarId=cal, eventId=extra["id"]).execute()
+            if digests:
+                print("digest removed: nothing outstanding")
         else:
-            cp.insert_event(svc, cal, dbody)
+            cp.check_cap(dbody["description"], "outstanding digest")
+            if digests:
+                svc.events().update(calendarId=cal, eventId=digests[0]["id"], body=dbody).execute()
+                for extra in digests[1:]:
+                    svc.events().delete(calendarId=cal, eventId=extra["id"]).execute()
+            else:
+                cp.insert_event(svc, cal, dbody)
     state = CC / "state" / "outstanding_digest.md"
     if not a.dry_run:
         state.write_text(body + "\n")
