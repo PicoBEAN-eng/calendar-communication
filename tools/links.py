@@ -59,21 +59,31 @@ def with_frontmatter(text: str, key: str, parent: str | None = None, extra: dict
     return "---\n" + "\n".join(lines) + "\n---\n" + body.lstrip("\n")
 
 
+def _bare_key_line(body: str) -> str | None:
+    """The note's own key: the LAST line that is exactly a key token, wherever it sits (a phone append
+    below the key line must not make the note keyless; found 2026-09-22)."""
+    for ln in reversed((body or "").splitlines()):
+        t = ln.strip()
+        if t and is_key(t):
+            return t
+    return None
+
+
 def strip_key_line(text: str) -> str:
-    """The body without a trailing bare key line (identity travels separately)."""
-    lines = (text or "").rstrip().splitlines()
-    if lines and is_key(lines[-1].strip()):
-        return "\n".join(lines[:-1]).rstrip() + ("\n" if lines[:-1] else "")
-    return text or ""
+    """The body without the note's own bare key line, wherever it sits (identity travels separately)."""
+    key = _bare_key_line(text)
+    if not key:
+        return text or ""
+    lines = [ln for ln in (text or "").splitlines() if ln.strip() != key]
+    return "\n".join(lines).rstrip() + ("\n" if lines else "")
 
 
 def key_of(text: str) -> str | None:
-    """The identity key: frontmatter `key:` first, else the last non-empty line if it is a bare key."""
+    """The identity key: frontmatter `key:` first, else the last bare key line in the body."""
     props, body = frontmatter(text)
     if is_key(props.get("key", "")):
         return props["key"]
-    lines = [ln.strip() for ln in (body or "").rstrip().splitlines() if ln.strip()]
-    return lines[-1] if lines and is_key(lines[-1]) else None
+    return _bare_key_line(body)
 
 
 def parent_of(text: str) -> str | None:
