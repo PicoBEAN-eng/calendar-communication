@@ -117,13 +117,9 @@ def read_calendar_copy(svc, cal, entry, key2name) -> str | None:
         except Exception as e:  # noqa: BLE001
             print(f"  cannot read event {eid}: {e}"); return None
         body = normalise_html(ev.get("description") or "").rstrip()
-        # The identity key is metadata, not content. It normally sits on the last line, but a phone edit that
-        # appends text pushes it into the middle, so drop the note's key wherever it appears on a line of its own
-        # (2026-09-22: otherwise free-form authoring writes the key into the vault body).
-        own = entry.get("key")
-        body = "\n".join(ln for ln in body.splitlines()
-                         if ln.strip() != own and not (links.is_key(ln.strip()) and ln.strip() == links.key_of(body or ""))).rstrip()
-        parts.append(body)
+        # The identity key is metadata, not content, and a phone edit that appends text pushes it off the last
+        # line, so it is stripped wherever it sits (links.strip_key_line, shared with the mirror since d0b57d8).
+        parts.append(links.strip_key_line(body).rstrip())
     if not parts:
         return None
     return links.down("\n\n".join(parts), key2name)
