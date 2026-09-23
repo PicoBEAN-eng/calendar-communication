@@ -64,6 +64,7 @@ NUMBER = re.compile(r"\d+")
 NOTES_HEAD = re.compile(r"^#{1,6}\s*(?:\d+\s*·\s*)?Notes\b", re.I)
 HEAD = re.compile(r"^#{1,6}\s")
 PLACEHOLDER = re.compile(r"^\s*[-*]\s*$")
+HTML_COMMENT = re.compile(r"^\s*<!--.*-->\s*$")
 
 
 def classify(v: str, c: str, freeform: bool = False):
@@ -128,8 +129,11 @@ def read_calendar_copy(svc, cal, entry, key2name) -> str | None:
 def diff_note(vault_text: str, cal_text: str, freeform: bool = False):
     """Returns (accepted: [dict], rejected: [dict]). Blank lines are ignored on both sides;
     a calendar line that duplicates an existing vault line (repeated table headers) is ignored."""
-    V = [ln.rstrip() for ln in vault_text.splitlines() if ln.strip()]
-    C = [ln.rstrip() for ln in cal_text.splitlines() if ln.strip()]
+    # Machine markers (`<!-- packer box 1 -->` on the order pages) are invisible to the diff on both sides:
+    # the calendar app strips HTML comments when a phone edit HTML-ifies the body, and a free-form pass must
+    # never read that as a delete (2026-09-23, the SY air page joining the free-form set).
+    V = [ln.rstrip() for ln in vault_text.splitlines() if ln.strip() and not HTML_COMMENT.match(ln)]
+    C = [ln.rstrip() for ln in cal_text.splitlines() if ln.strip() and not HTML_COMMENT.match(ln)]
     vset = set(V)
     acc, rej = [], []
     sm = difflib.SequenceMatcher(a=V, b=C, autojunk=False)
