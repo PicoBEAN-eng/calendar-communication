@@ -51,7 +51,7 @@ WRITER = "publish_up"
 BODY_CAP = 7600
 INDEX_DAY = "3000-01-02"   # default; main() derives the real value from note_anchor_date + 1 day (2026-09-22)
 MISSING_PASSES = 3
-MAX_DEPTH = 4
+MAX_DEPTH = 12   # was 4 until the Warehouse tree (7 levels) went up, 2026-09-24
 
 
 def h(text: str) -> str:
@@ -164,7 +164,9 @@ def rebuild_sidecar(mine: dict) -> dict:
             fk = priv.get("publish_folder")
             toks = (e.get("location") or "").split()
             parent = next((t[1:] for t in toks if len(t) == 6 and t[0] == "p"), None)
-            st["folders"][fk] = {"path": priv.get("publish_path", "").rstrip("/"), "layer": priv.get("publish_layer", ""),
+            if int(priv.get("publish_part") or 1) > 1:
+                st["folders"].setdefault(fk, {"index_extra": []}).setdefault("index_extra", []).append(e["id"]); continue
+            st["folders"][fk] = {**st["folders"].get(fk, {}), "path": priv.get("publish_path", "").rstrip("/"), "layer": priv.get("publish_layer", ""),
                                  "label": priv.get("publish_label", ""), "parent": parent, "index_id": e["id"],
                                  "inode": None, "spec": priv.get("publish_spec", ""), "mode": priv.get("publish_mode", ""),
                                  "missing": 0}
@@ -240,6 +242,53 @@ def parse_layers(cfg) -> list:
     return out
 
 
+def expand_tree(layers: list, cfg: dict, vault: Path) -> list:
+    """publish_tree (2026-09-24): every subdirectory under a listed root is a mapped folder of its own —
+    same year and mode, label = the directory name — so the calendar carries the vault's tree (each
+    folder event lists its child folders and its own notes; the phone hops by key). Excluded paths
+    and hidden directories are skipped. Order: parents before children, so parents resolve first."""
+    roots = {r.strip("/") for r in (cfg.get("publish_tree") or [])}
+    if not roots:
+        return layers
+    excludes = [x.strip("/") for x in (cfg.get("publish_exclude") or [])]
+    specs = {spec for spec, *_ in layers}
+    out = list(layers)
+    for spec, year, label, mode in layers:
+        if spec not in roots:
+            continue
+        base = vault / spec
+        if not base.is_dir():
+            continue
+        for d in sorted(base.rglob("*")):
+            if not d.is_dir() or any(part.startswith(".") for part in d.relative_to(vault).parts):
+                continue
+            rel = str(d.relative_to(vault))
+            if any(rel == x or rel.startswith(x + "/") for x in excludes) or rel in specs:
+                continue
+            if len(d.relative_to(vault).parts) > MAX_DEPTH:
+                continue
+            out.append((rel, year, d.name, mode)); specs.add(rel)
+    # Titles must be unique ("Note: <label> index"): two folders called 2024 or Products collide, so a
+    # tree folder is labelled parent/name, and the full path under the root when even that collides.
+    seen = {}
+    for spec, *_ in out:
+        seen[spec] = spec
+    labels = {}
+    for i, (spec, year, label, mode) in enumerate(out):
+        if spec in roots or spec not in seen or i < len(layers):
+            labels.setdefault(label, []).append(i); continue
+        parts = spec.split("/")
+        two = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+        out[i] = (spec, year, two, mode); labels.setdefault(two, []).append(i)
+    for label, idxs in labels.items():
+        if len(idxs) > 1:
+            for i in idxs:
+                spec, year, _, mode = out[i]
+                if i >= len(layers):
+                    out[i] = (spec, year, "/".join(spec.split("/")[1:]) or spec, mode)
+    return out
+
+
 def all_dirs(vault: Path) -> list:
     out = []
     for p in vault.rglob("*"):
@@ -277,7 +326,7 @@ def main():
     # The index day is the day after the stream's anchor date (config), not a constant: the band can move by config alone.
     _anchor = date.fromisoformat(cfg.get("note_anchor_date") or "3000-01-01")
     index_day = (_anchor + timedelta(days=1)).isoformat(); index_end = (_anchor + timedelta(days=2)).isoformat()
-    layers = parse_layers(cfg)
+    layers = expand_tree(parse_layers(cfg), cfg, vault)
     excludes = [x.strip("/") for x in (cfg.get("publish_exclude") or [])]
     svc = cp.get_service(cfg); cal = cfg["calendar_id"]
     state_path = Path(cfg.get("publish_state") or (CC / "state" / "publish.json"))
@@ -390,7 +439,10 @@ def main():
     for fk, (d, year, label, spec) in resolved.items():
         if d is None:
             continue
-        others = [op for ok, op in paths.items() if ok != fk]
+        # Only mapped folders BELOW this one carve notes out of it (a nested folder lists its own notes);
+        # an ancestor must not, or a tree root would swallow nothing and its subfolders everything (2026-09-24).
+        mine_path = str(d.relative_to(vault))
+        others = [op for ok, op in paths.items() if ok != fk and op.startswith(mine_path + "/")]
         for rel, p in notes_under(vault, d, excludes, others).items():
             raw = p.read_text(encoding="utf-8", errors="replace")
             text = canonical(raw)
@@ -511,7 +563,7 @@ def main():
         if f.get("missing", 0) == 0:
             continue
         held = [rel for rel, n in notes.items() if n.get("folder") == fk]
-        ids = [eid for rel in held for eid in (notes[rel].get("event_ids") or [])] + ([f["index_id"]] if f.get("index_id") else [])
+        ids = [eid for rel in held for eid in (notes[rel].get("event_ids") or [])] + ([f["index_id"]] if f.get("index_id") else []) + list(f.get("index_extra") or [])
         counts["pending deletes"] += len(ids)
         since = f.get("missing_since") or now
         touched = [eid for eid in ids if eid in mine and mine[eid].get("updated", "") > since]
@@ -541,26 +593,55 @@ def main():
                  "freeform": "any line you edit, add or delete flows into the vault within a minute",
                  "readonly": "the calendar copy is read-only, edits here are overwritten; edits belong in Obsidian"}
         how = blurb.get(f.get("mode") or "", "the calendar copy is read-only, edits belong in Obsidian")
-        lines = [f"Index of the {name} folder, published from Obsidian ({len(rws)} notes). "
+        kids = sorted(((folders[ck].get("label") or Path(folders[ck]["path"]).name), ck)
+                      for ck, cf in folders.items() if cf.get("parent") == fk and cf.get("path") and cf.get("missing", 0) == 0)
+        lines = [f"Index of the {name} folder, published from Obsidian ({len(rws)} notes"
+                 + (f", {len(kids)} folders" if kids else "") + "). "
                  f"Open one by searching its exact title with the day pinned to the date shown; {how}.", ""]
+        lines += [f"- {kl}/ · {ck}" for kl, ck in kids]        # child folders first: hop by key
         lines += [f"- {t} ({dd})" + (f" · {m} parts" if m > 1 else "") for t, dd, m in rws]
-        lines += ["", f"Updated {date.today().isoformat()}", "", fk]
-        body = "\n".join(lines)
+        lines += ["", f"Updated {date.today().isoformat()}"]
+        # A big folder's listing does not fit one event: split like a note (2026-09-24, the SKU folder
+        # lists 1,683 notes). Part 1 keeps the folder's index id; extra parts ride in f["index_extra"].
+        parts = split_parts("\n".join(lines), BODY_CAP)
+        m = len(parts)
         loc = fk + (f" p{f['parent']}" if f.get("parent") else "")
         priv = {"comms_kind": "folder", "comms_writer": WRITER, "publish_index": "1", "publish_folder": fk, "publish_path": f["path"] + "/",
                 "publish_layer": year, "publish_label": label, "publish_spec": spec, "publish_mode": f.get("mode", "")}
-        ev_body = {"summary": title, "start": {"date": index_day}, "end": {"date": index_end}, "location": loc, "description": body,
-                   "extendedProperties": {"private": priv}}
-        cp.check_cap(body, title)
-        cur = mine.get(f.get("index_id")) if f.get("index_id") else next((e for e in mine.values() if e.get("summary") == title), None)
-        if cur and (cur.get("description") or "") == body and cur.get("summary") == title and (cur.get("location") or "") == loc:
-            f["index_id"] = cur["id"]; continue
-        print(f"{tag}{'update' if cur else 'insert'}  {title}")
-        if not dry:
-            if cur:
-                cp.write_event(svc, cal, cur["id"], ev_body, replace_meta=True); f["index_id"] = cur["id"]
+        extra = [i for i in (f.get("index_extra") or []) if i]
+        for eid in extra[max(0, m - 1):]:
+            print(f"{tag}delete  extra index part of {name}")
+            if not dry and eid in mine:
+                cp.pace(); svc.events().delete(calendarId=cal, eventId=eid).execute()
+        extra = extra[:max(0, m - 1)]
+        for i, part in enumerate(parts):
+            ptitle = title if m == 1 else f"{title} · part {i + 1} of {m}"
+            body = part.rstrip() + "\n\n" + fk + "\n"
+            ev_body = {"summary": ptitle, "start": {"date": index_day}, "end": {"date": index_end}, "location": loc, "description": body,
+                       "extendedProperties": {"private": {**priv, "publish_part": str(i + 1), "publish_parts": str(m)}}}
+            cp.check_cap(body, ptitle)
+            if i == 0:
+                cur = mine.get(f.get("index_id")) if f.get("index_id") else next((e for e in mine.values() if e.get("summary") == ptitle), None)
             else:
-                f["index_id"] = cp.insert_event(svc, cal, ev_body)["id"]
+                cur = mine.get(extra[i - 1]) if i - 1 < len(extra) else None
+            if cur and (cur.get("description") or "") == body and cur.get("summary") == ptitle and (cur.get("location") or "") == loc:
+                if i == 0:
+                    f["index_id"] = cur["id"]
+                continue
+            print(f"{tag}{'update' if cur else 'insert'}  {ptitle}")
+            if dry:
+                continue
+            if cur:
+                cp.write_event(svc, cal, cur["id"], ev_body, replace_meta=True); new_id = cur["id"]
+            else:
+                new_id = cp.insert_event(svc, cal, ev_body)["id"]
+            if i == 0:
+                f["index_id"] = new_id
+            elif i - 1 < len(extra):
+                extra[i - 1] = new_id
+            else:
+                extra.append(new_id)
+        f["index_extra"] = extra
 
     for pr in problems:
         print(f"{tag}note: {pr}")

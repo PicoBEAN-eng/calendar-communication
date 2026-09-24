@@ -53,3 +53,5 @@ down_pipe_max_lines = 50
 # down_pipe_journal = "/path/to/vault/Records/Down-pipe log.md"   # default <publish_dir>/The Warehouse/Records/Down-pipe log.md
 # down_pipe_snapshot_cmd = "/path/to/vault-snapshot"              # git snapshot taken before the first write of a pass
 
+
+# publish_tree = ["The Warehouse"]   # roots whose every subdirectory becomes a mapped folder
