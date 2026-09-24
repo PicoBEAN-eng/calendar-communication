@@ -415,15 +415,24 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
         if pub.h(cal_text.strip()) in (n.get("hash"), pub.h(rendered.strip())):
             continue      # the calendar copy is exactly what was published (or what would be now): no phone edit
         free = is_freeform(n["folder"])
-        if free and n.get("hash") and pub.h(vault_text.strip()) != n["hash"]:
-            # The vault moved since this note was last published, so the calendar copy is stale: diffing against
-            # it would read the vault's new lines as deletions and revert them. Wait for the publisher to
-            # re-render (it runs right after, in the same pass) — the vault always wins on content.
-            print(f"{tag}stale   {rel}: vault changed since the last publish; skipped until the calendar copy is re-rendered")
-            jl.append(f"- {stamp} · {fmode} · STALE · `{rel}` · the vault changed since this note was published, so the "
-                      f"calendar copy was not applied; the vault wins and the publisher will re-render it")
-            continue
+        stale = bool(free and n.get("hash") and pub.h(vault_text.strip()) != n["hash"])
         acc, rej = diff_note(rendered, cal_text, free)
+        if stale:
+            # The vault moved since this note was last published, so the calendar copy is stale: applying its
+            # edits or deletes would read the vault's new lines as reverts. Pure INSERTS and ticks revert
+            # nothing, so they still land (2026-09-24: a Must-order row typed on the phone right after a
+            # regeneration must not wait a cycle and then be overwritten); everything else waits for the
+            # publisher to re-render — the vault always wins on content.
+            safe = [c for c in acc if c["kind"] in ("insert", "note", "tick")]
+            dropped = len(acc) - len(safe)
+            acc = safe
+            print(f"{tag}stale   {rel}: vault changed since the last publish; {len(safe)} insert/tick line(s) kept, "
+                  f"{dropped} edit/delete line(s) skipped until the calendar copy is re-rendered")
+            if dropped:
+                jl.append(f"- {stamp} · {fmode} · STALE · `{rel}` · the vault changed since this note was published: "
+                          f"{dropped} edited/deleted line(s) not applied (the vault wins), {len(safe)} inserted line(s) applied")
+            if not acc:
+                continue
         if not acc and not rej:
             continue
         for r in rej:
