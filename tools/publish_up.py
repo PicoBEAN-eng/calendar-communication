@@ -166,7 +166,8 @@ def rebuild_sidecar(mine: dict) -> dict:
             parent = next((t[1:] for t in toks if len(t) == 6 and t[0] == "p"), None)
             st["folders"][fk] = {"path": priv.get("publish_path", "").rstrip("/"), "layer": priv.get("publish_layer", ""),
                                  "label": priv.get("publish_label", ""), "parent": parent, "index_id": e["id"],
-                                 "inode": None, "spec": priv.get("publish_spec", ""), "missing": 0}
+                                 "inode": None, "spec": priv.get("publish_spec", ""), "mode": priv.get("publish_mode", ""),
+                                 "missing": 0}
         else:
             rel = priv.get("publish_path")
             if not rel:
@@ -218,12 +219,24 @@ def verify(vault: Path, state: dict, mine: dict, stale_minutes: int) -> int:
 
 
 # ---- resolution -------------------------------------------------------------------------------
+MODES = ("interactive", "readonly", "freeform")
+
+
 def parse_layers(cfg) -> list:
+    """`path=year|label|mode` -> (spec, year, label, mode). The MODE (2026-09-24) is the one word that says how a
+    folder behaves on the calendar: `interactive` = machine-written pages the phone engages with through the
+    shape grammar (ticks, numbers over blanks, Notes lines, table rows); `readonly` = machine-written, the
+    publisher re-asserts its copy every pass and the down-pipe never reads it; `freeform` = human/agent prose,
+    any line edit flows down. Empty = unset: the down-pipe falls back to its older list settings."""
     out = []
     for item in cfg["publish_layers"]:
         spec, rest = item.split("=", 1)
-        year, _, label = rest.partition("|")
-        out.append((spec.strip(), year.strip(), label.strip()))
+        year, _, rest = rest.partition("|")
+        label, _, mode = rest.partition("|")
+        mode = mode.strip().lower()
+        if mode and mode not in MODES:
+            sys.exit(f"publish_layers: unknown mode {mode!r} on {spec.strip()} (use {', '.join(MODES)})")
+        out.append((spec.strip(), year.strip(), label.strip(), mode))
     return out
 
 
@@ -289,7 +302,7 @@ def main():
     # ---- 1. resolve every mapping to a folder key + directory --------------------------------
     resolved = {}          # fkey -> (dir Path | None, year, label, spec)
     claimed = set()
-    for spec, year, label in layers:
+    for spec, year, label, mode in layers:
         fk = None; d = None
         if spec.startswith("k:"):
             fk = spec[2:]
@@ -347,7 +360,7 @@ def main():
             folders[fk] = {"path": None, "layer": year, "label": label, "parent": None, "index_id": None, "inode": None,
                            "spec": spec, "missing": 0}
             print(f"{tag}folder  new mapping {spec} -> key {fk}")
-        f = folders[fk]; f["layer"] = year; f["label"] = label; f["spec"] = spec
+        f = folders[fk]; f["layer"] = year; f["label"] = label; f["spec"] = spec; f["mode"] = mode
         if d is not None:
             claimed.add(d)
             newrel = str(d.relative_to(vault))
@@ -524,15 +537,18 @@ def main():
         name = label or d.name
         title = f"Note: {name} index"
         rws = sorted(rows.get(fk, []))
-        lines = [f"Index of the {name} folder, published one-way from Obsidian ({len(rws)} notes). "
-                 "Open one by searching its exact title with the day pinned to the date shown; the calendar copy is read-only, "
-                 "edits belong in Obsidian.", ""]
+        blurb = {"interactive": "tick boxes, type numbers over blanks, add lines under Notes or rows to a table; the vault applies them within a minute",
+                 "freeform": "any line you edit, add or delete flows into the vault within a minute",
+                 "readonly": "the calendar copy is read-only, edits here are overwritten; edits belong in Obsidian"}
+        how = blurb.get(f.get("mode") or "", "the calendar copy is read-only, edits belong in Obsidian")
+        lines = [f"Index of the {name} folder, published from Obsidian ({len(rws)} notes). "
+                 f"Open one by searching its exact title with the day pinned to the date shown; {how}.", ""]
         lines += [f"- {t} ({dd})" + (f" · {m} parts" if m > 1 else "") for t, dd, m in rws]
         lines += ["", f"Updated {date.today().isoformat()}", "", fk]
         body = "\n".join(lines)
         loc = fk + (f" p{f['parent']}" if f.get("parent") else "")
         priv = {"comms_kind": "folder", "comms_writer": WRITER, "publish_index": "1", "publish_folder": fk, "publish_path": f["path"] + "/",
-                "publish_layer": year, "publish_label": label, "publish_spec": spec}
+                "publish_layer": year, "publish_label": label, "publish_spec": spec, "publish_mode": f.get("mode", "")}
         ev_body = {"summary": title, "start": {"date": index_day}, "end": {"date": index_end}, "location": loc, "description": body,
                    "extendedProperties": {"private": priv}}
         cp.check_cap(body, title)

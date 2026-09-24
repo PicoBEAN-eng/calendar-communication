@@ -20,6 +20,9 @@ is snapshotted with everything else).
 
 comms.toml:
     down_pipe = "off" | "log" | "apply"        (default off)
+    # Scope (2026-09-24): the folder MODE on each publish_layers line — `path=year|label|mode`. interactive =
+    # the shape grammar applies (this file's three shapes + table rows); freeform = any line edit; readonly =
+    # never read, the publisher re-asserts its copy. When no folder carries a mode, the older fences below apply:
     down_pipe_layers = ["3060"]
     down_pipe_folders = ["! Active/Location Checks"]   # optional: narrow the whole scope to these folder paths or keys
     down_pipe_apply_folders = ["! Active/Location Checks"]   # optional: with "apply", only these folders write; the rest of the scope logs
@@ -268,17 +271,24 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
     if not cfg.get("publish_dir"):
         print("down-pipe needs the publisher (publish_dir); nothing done"); return 0
     vault = Path(cfg["publish_dir"]).expanduser().resolve()
+    state = pub.load_state(Path(cfg.get("publish_state") or (CC / "state" / "publish.json")))
+    folders, notes = state["folders"], state["notes"]
+    # Folder MODES (2026-09-24, publish_layers `path=year|label|mode`) are the scope when any folder carries one:
+    # interactive and freeform folders are read, readonly ones never are. Without modes the older fences apply
+    # (down_pipe_layers / down_pipe_folders / down_pipe_apply_folders / down_pipe_freeform_folders).
+    by_mode = any(f.get("mode") for f in folders.values())
     layers = {str(y) for y in (cfg.get("down_pipe_layers") or [])}
-    if not layers:
-        print("down_pipe_layers is empty: nothing is in scope; nothing done"); return 0
+    if not layers and not by_mode:
+        print("down_pipe_layers is empty and no folder carries a mode: nothing is in scope; nothing done"); return 0
     max_lines = int(cfg.get("down_pipe_max_lines") or 50)
     jpath = Path(cfg.get("down_pipe_journal") or (vault / "The Warehouse/Records/Down-pipe log.md")).expanduser()
     snap_cmd = cfg.get("down_pipe_snapshot_cmd")
-    state = pub.load_state(Path(cfg.get("publish_state") or (CC / "state" / "publish.json")))
-    folders, notes = state["folders"], state["notes"]
-    allowed = {fk: f for fk, f in folders.items() if str(f.get("layer")) in layers and f.get("path")}
+    if by_mode:
+        allowed = {fk: f for fk, f in folders.items() if f.get("mode") in ("interactive", "freeform") and f.get("path")}
+    else:
+        allowed = {fk: f for fk, f in folders.items() if str(f.get("layer")) in layers and f.get("path")}
     only = {x.strip("/") for x in (cfg.get("down_pipe_folders") or [])}      # optional narrower fence: folder paths or keys
-    if only:
+    if only and not by_mode:
         allowed = {fk: f for fk, f in allowed.items() if fk in only or f.get("path") in only or f.get("spec") in only}
         if not allowed:
             print("down_pipe_folders names no mapped folder in the allowed layers; nothing in scope"); return 0
@@ -289,10 +299,14 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
     freeform_set = {x.strip("/") for x in (cfg.get("down_pipe_freeform_folders") or [])}
     def is_freeform(fk):
         f = folders[fk]
+        if by_mode:
+            return f.get("mode") == "freeform"
         return bool(freeform_set) and (fk in freeform_set or f.get("path") in freeform_set or f.get("spec") in freeform_set)
     def folder_mode(fk):
         if mode != "apply":
             return mode
+        if by_mode:
+            return "apply"        # readonly folders are outside `allowed`; every folder in scope writes
         if apply_only and not (fk in apply_only or folders[fk].get("path") in apply_only or folders[fk].get("spec") in apply_only):
             return "log"
         return "apply"
@@ -443,9 +457,14 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
         journal(jpath, jl)
     if only_rels is not None and not total_acc and not total_rej:
         return 0
-    print(f"down-pipe pass ({mode}{', apply only ' + ', '.join(sorted(apply_only)) if apply_only else ''}"
-          f"{'; free-form: ' + ', '.join(sorted(freeform_set)) if freeform_set else ''}): {total_acc} accepted, {total_rej} rejected, {applied_total} applied"
-          + (f", snapshot {snap}" if snap else ""))
+    if by_mode:
+        scope = "; ".join(f"{m}: " + ", ".join(sorted(f["path"] for f in folders.values() if f.get("mode") == m and f.get("path")))
+                          for m in ("interactive", "freeform") if any(f.get("mode") == m for f in folders.values()))
+        head = f"down-pipe pass ({mode} by folder mode — {scope})"
+    else:
+        head = (f"down-pipe pass ({mode}{', apply only ' + ', '.join(sorted(apply_only)) if apply_only else ''}"
+                f"{'; free-form: ' + ', '.join(sorted(freeform_set)) if freeform_set else ''})")
+    print(f"{head}: {total_acc} accepted, {total_rej} rejected, {applied_total} applied" + (f", snapshot {snap}" if snap else ""))
     return applied_total
 
 

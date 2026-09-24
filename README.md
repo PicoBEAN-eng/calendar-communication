@@ -45,7 +45,7 @@ and on the calendar itself.
 | `bin/comms-units` | ops | install / status / remove the two user units |
 | `bin/comms-update` | ops | pull main, refresh deps if their manifests changed, smoke-test, reinstall units, restart the session if needed |
 | `bin/comms-push` | ops | publish local commits: rebase onto `origin/main`, then push — refuses a dirty tree, never forces |
-| `tools/down_pipe.py` | Google | calendar -> vault, ticks only: box ticked, number over a blank, a line under Notes; log or apply per instance (`down_pipe`), scoped by layer year, snapshot + journal before writes |
+| `tools/down_pipe.py` | Google | calendar -> vault: per folder mode (`path=year|label|mode` in publish_layers) — interactive = ticks, numbers over blanks, Notes lines, table rows; freeform = any line edit; readonly = never read; log or apply per instance (`down_pipe`), snapshot + journal before writes |
 | `tools/note_protocol.py` | Google | publish this stream's copy of the phone rules as a context note and rebuild `Note: Index` |
 | `tools/wakeup.py` | Google | the daily wake-up ritual: roll outstanding items to tomorrow, lay the welcome note on today, archive finished traffic into the band, rescue strays from the anchor date, shelve the meridian spans where `tcm-clock` exists (`deploy/comms-wakeup.timer`, 00:05 and 06:30 local, retried) |
 | `tools/journal_export.py` | Google | one-way export of Note: events and finished threads into an Obsidian vault (`journal_dir` in comms.toml, opt-in): relay plumbing stripped, stable frontmatter ids, locally edited files left alone (`deploy/comms-journal.timer`, every 15 minutes) |

@@ -43,6 +43,9 @@ client_secret_file = "state/client_secret.json"
 # "apply" writes the three accepted shapes (box ticked, number over a blank, a line under Notes) into the
 # vault file by exact line match, after running down_pipe_snapshot_cmd once per pass. Scope = layer years listed.
 down_pipe = "off"
+# Scope = the folder MODE on each publish_layers line (`path=year|label|mode`, 2026-09-24): interactive (ticks, numbers,
+# Notes lines, table rows flow down), freeform (any line edit flows down), readonly (never read; the publisher
+# re-asserts its copy every pass). The lists below are the older fences, used only when no folder carries a mode.
 down_pipe_layers = []                                  # e.g. ["3060"]
 # down_pipe_folders = ["! Active/Location Checks"]     # optional: only these folder paths/keys within those layers
 # down_pipe_apply_folders = ["! Active/Location Checks"]   # optional: with "apply", only these write; the rest of the scope logs
