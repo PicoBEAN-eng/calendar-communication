@@ -278,7 +278,8 @@ def expand_tree(layers: list, cfg: dict, vault: Path) -> list:
         if spec in roots or spec not in seen or i < len(layers):
             labels.setdefault(label, []).append(i); continue
         parts = spec.split("/")
-        two = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+        # a root's direct child is just its name ("Inventory"); deeper folders read parent/name ("Shopify Orders/2024")
+        two = parts[-1] if "/".join(parts[:-1]) in roots else "/".join(parts[-2:])
         out[i] = (spec, year, two, mode); labels.setdefault(two, []).append(i)
     for label, idxs in labels.items():
         if len(idxs) > 1:
@@ -524,6 +525,10 @@ def main():
                         and cur["start"].get("date") == day and (cur.get("location") or "") == loc)
                 if same and all(cur_priv.get(k) == v for k, v in priv.items()):
                     counts["unchanged"] += 1; continue
+                if os.environ.get("PUBLISH_DEBUG") and not same:
+                    why = [k for k, a, b in (("summary", cur.get("summary"), title), ("description", cur.get("description") or "", body),
+                                             ("date", cur["start"].get("date"), day), ("location", cur.get("location") or "", loc)) if a != b]
+                    print(f"[debug] {rel} part {i + 1}: differs in {why}; " + (f"desc len cal {len(cur.get('description') or '')} vs {len(body)}" if "description" in why else ""))
                 if same:      # only the bookkeeping moved (a rename or move): patch the private properties, nothing else
                     if not dry:
                         cp.write_event(svc, cal, ids[i], {"extendedProperties": {"private": priv}}, existing=cur, verify=False)
