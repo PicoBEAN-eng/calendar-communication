@@ -417,6 +417,13 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
         free = is_freeform(n["folder"])
         stale = bool(free and n.get("hash") and pub.h(vault_text.strip()) != n["hash"])
         acc, rej = diff_note(rendered, cal_text, free)
+        # A link key glued to a wiki-link (`[[Name]]lab12c`) is calendar plumbing, never vault content: it means
+        # the key map could not translate that link back (a key minted by a load still in flight, 2026-09-24 —
+        # 80 glued lines reached the vault). Such a line is never applied, whatever its kind.
+        glued = [c for c in acc if c.get("after") and links.GLUED.search(c["after"])]
+        if glued:
+            rej += [{"before": c.get("before"), "after": c["after"], "why": "calendar copy carries an untranslated link key (stale key map) — not applied"} for c in glued]
+            acc = [c for c in acc if c not in glued]
         if stale:
             # The vault moved since this note was last published, so the calendar copy is stale: applying its
             # edits or deletes would read the vault's new lines as reverts. Pure INSERTS and ticks revert
