@@ -333,6 +333,16 @@ def thread_path(cfg: dict, root: str) -> Path:
     return Path(cfg["spool_dir"]) / "threads" / f"{root}.md"
 
 
+def thread_mirror_path(cfg: dict, root: str, title: str) -> Path | None:
+    """The thread's copy in the vault (thread_mirror_dir, 2026-09-24): one note per thread, named by title
+    with a key-sized tail of the root event id so repeated titles never collide."""
+    d = cfg.get("thread_mirror_dir")
+    if not d:
+        return None
+    safe = re.sub(r'[\\/:*?"<>|#^\[\]]+', "-", title).strip() or "thread"
+    return Path(d).expanduser() / f"{safe[:80]} · {root[:6]}.md"
+
+
 def thread_append(cfg: dict, root: str, title: str, heading: str, text: str) -> None:
     p = thread_path(cfg, root)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -340,6 +350,13 @@ def thread_append(cfg: dict, root: str, title: str, heading: str, text: str) -> 
         p.write_text(f"# Thread {root} — {title}\n")
     with open(p, "a", encoding="utf-8") as f:
         f.write(f"\n## {heading}\n\n{text.strip()}\n")
+    m = thread_mirror_path(cfg, root, title)
+    if m:
+        try:
+            m.parent.mkdir(parents=True, exist_ok=True)
+            m.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError as e:
+            print(f"thread mirror failed for {root}: {e}")
 
 
 def find_reply_target(state: dict, summary: str) -> str | None:

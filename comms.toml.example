@@ -34,6 +34,7 @@ effort_order = ["low", "medium", "high", "xhigh", "max"]   # queue order (same-a
 
 # --- paths (relative to this file) --------------------------------------------------------
 spool_dir = "spool"
+# thread_mirror_dir = "/path/to/vault/~ Communication/Calendar relay/Threads"   # optional: a vault copy of every thread transcript
 state_file = "state/poller_state.json"
 token_file = "state/token.json"
 client_secret_file = "state/client_secret.json"
