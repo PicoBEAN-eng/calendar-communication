@@ -83,8 +83,22 @@ def index_body(notes: list[dict], cfg) -> str:
 
     def summary(ev):
         return ((ev.get("description") or "").strip().splitlines() or ["(no summary)"])[0]
-    rows = {ev["summary"]: (summary(ev), ev["start"].get("date", anchor)) for ev in notes
-            if ev.get("summary", "").lower().startswith("note:") and ev["summary"] != INDEX_TITLE}
+    def front_door(ev) -> bool:
+        """Hand-laid notes and TOP-LEVEL folder indexes only (2026-09-24: the Warehouse tree put 87 folder
+        indexes on day two and the Index blew the cap). A nested folder's index carries a parent token
+        (`p<key>`) in its location and is reached through its parent's listing; an index's extra parts
+        are reached through part 1."""
+        title = ev.get("summary", "")
+        if not title.lower().startswith("note:") or title == INDEX_TITLE:
+            return False
+        priv = (ev.get("extendedProperties") or {}).get("private") or {}
+        if priv.get("publish_index"):
+            if any(tok.startswith("p") and len(tok) == 6 for tok in (ev.get("location") or "").split()):
+                return False
+            if int(priv.get("publish_part") or 1) > 1:
+                return False
+        return True
+    rows = {ev["summary"]: (summary(ev), ev["start"].get("date", anchor)) for ev in notes if front_door(ev)}
     rows[ptitle] = (protocol_summary(stream), anchor)
     ordered = [ptitle] + sorted(t for t in rows if t != ptitle)
     lines = [f"Index of context notes on the {stream} calendar ({len(ordered)} notes, {anchor} and the day after). "
