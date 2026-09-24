@@ -591,8 +591,14 @@ def main():
             if canonical(new) != canonical(current):
                 print(("[dry] " if a.dry_run else "") + f"listing -> event   {n.name}")
                 if not a.dry_run:
-                    cp.write_event(svc, cal, n.ev["id"], {"description": links.up(new, REG["name2key"], REG["missing"]),
-                                   "extendedProperties": {"private": {"mirror_hash": h(new)}}}, existing=n.ev, verify=False)
+                    try:
+                        cp.write_event(svc, cal, n.ev["id"], {"description": links.up(new, REG["name2key"], REG["missing"]),
+                                       "extendedProperties": {"private": {"mirror_hash": h(new)}}}, existing=n.ev, verify=False)
+                    except cp.CapExceeded as e:
+                        # A folder listing that outgrows one event (2026-09-24, the pilot folder after every link gained
+                        # a key) must not kill the pass: skip it, say so, split it when the mirror learns parts.
+                        print(f"SKIP listing {n.name}: {e}")
+                        continue
                 n.ev["description"] = new
             continue
         current = path.read_text(encoding="utf-8") if path.exists() else (n.ev.get("description") or "")

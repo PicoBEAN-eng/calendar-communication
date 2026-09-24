@@ -484,6 +484,22 @@ def run_pass(cfg: dict, svc=None, *, mode: str | None = None, dry_run: bool = Fa
     return applied_total
 
 
+_HOOK_STATE: dict = {}
+
+
+def _hook_state(cfg: dict) -> dict:
+    """The publisher sidecar, re-read only when its mtime moves (one tick can see thousands of events)."""
+    path = Path(cfg.get("publish_state") or (CC / "state" / "publish.json"))
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    if _HOOK_STATE.get("mtime") != mtime:
+        _HOOK_STATE["mtime"] = mtime
+        _HOOK_STATE["state"] = pub.load_state(path)
+    return _HOOK_STATE["state"]
+
+
 def on_event(svc, cfg: dict, ev: dict) -> int:
     """Poller hook (2026-09-19, operator go): a changed event carrying publish_path is diffed and applied on the spot,
     then that note is re-rendered by a lock-respecting publish pass (skipped if the timer pass holds the lock:
@@ -495,6 +511,25 @@ def on_event(svc, cfg: dict, ev: dict) -> int:
         rel = priv.get("publish_path")
         if not rel or priv.get("comms_writer") != pub.WRITER:
             return 0
+        # Cheap exits before any API call (2026-09-24: a load of 7,800 inserts made every tick call the hook
+        # per event, each a paced calendar read — one tick ran 1h49m). Our own render carries publish_hash
+        # equal to the vault file's hash: nothing to apply. A readonly folder is never read.
+        if priv.get("publish_index"):
+            return 0
+        state = _hook_state(cfg)
+        fk = priv.get("publish_folder")
+        folder = (state.get("folders") or {}).get(fk) or {}
+        modes_in_use = any(f.get("mode") for f in (state.get("folders") or {}).values())
+        if modes_in_use and folder.get("mode") not in ("interactive", "freeform"):
+            return 0
+        vault = Path(cfg.get("publish_dir") or "").expanduser()
+        fpath = vault / rel
+        if priv.get("publish_hash") and fpath.exists():
+            try:
+                if pub.h(pub.canonical(fpath.read_text(encoding="utf-8", errors="replace"))) == priv["publish_hash"]:
+                    return 0      # the calendar copy is exactly what we published: no phone edit here
+            except OSError:
+                pass
         applied = run_pass(cfg, svc, only_rels={rel})
         if applied:
             lock = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "comms-publish.lock"
