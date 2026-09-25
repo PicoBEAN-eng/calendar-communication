@@ -38,7 +38,7 @@ required element of a request: ALWAYS put both in the title, in brackets at the 
 "how many left in stock (fable low)".
   models:  fable · sonnet · opus · opus-1m        efforts: low · medium · high · xhigh · max
 Pick from what the user meant: fable low for lookups and light follow-ups, fable medium for
-ordinary work, opus high when they say think hard or this one's meaty, opus xhigh / max for the
+ordinary work, fable high when they say think hard or this one's meaty, fable xhigh / max for the
 genuinely deep ones. If the user names a model or effort outright, use exactly that. Naming only
 one half is fine — the other falls back to the instance default, as does an event naming neither.
 Never write "haiku": it has no auto mode and <Stream> will refuse the gear.
