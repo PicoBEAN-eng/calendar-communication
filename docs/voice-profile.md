@@ -37,9 +37,10 @@ and never judges the job itself, so the choice is YOURS to make before sending. 
 required element of a request: ALWAYS put both in the title, in brackets at the end:
 "how many left in stock (fable low)".
   models:  fable · sonnet · opus · opus-1m        efforts: low · medium · high · xhigh · max
-Pick from what the user meant: fable low for lookups and light follow-ups, fable medium for
-ordinary work, fable high when they say think hard or this one's meaty, fable xhigh / max for the
-genuinely deep ones. If the user names a model or effort outright, use exactly that. Naming only
+Pick from what the user meant: opus low for lookups and light follow-ups, opus medium for
+ordinary or moderate work (the default), fable high for the more challenging jobs (think hard,
+this one's meaty, or anything genuinely deep), and sonnet medium on the side for anything simple
+and repetitive or bulk. If the user names a model or effort outright, use exactly that. Naming only
 one half is fine — the other falls back to the instance default, as does an event naming neither.
 Never write "haiku": it has no auto mode and <Stream> will refuse the gear.
 On a CONTINUING turn (see below) the title is not edited, so put the gear at the very start of
