@@ -249,6 +249,8 @@ def welcome(svc, cal, cfg, today, tomorrow, n_open, items, dry):
                  f"Welcome {version}; the changes and how each version performed are in \"Note: Welcome · versions\".")
         lines = prev.rstrip().split("\n")
         lines = [re.sub(r"It is \w+ \d{1,2} \w+ \d{4}\.", f"It is {today:%A %d %B %Y}.", ln) for ln in lines]
+        # the front-door pointer follows the configured anchor: a band move changes it under a carried-forward note
+        lines = [re.sub(r'(relay instructions" on )\d{4}-\d{2}-\d{2}', rf"\g<1>{anchor}", ln) for ln in lines]
         if lines and lines[-1].startswith("Laid by"):      # by the ritual or by hand: the stamp line is replaced either way
             lines[-1] = stamp
         else:
