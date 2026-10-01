@@ -46,6 +46,7 @@ and on the calendar itself.
 | `bin/comms-update` | ops | pull main, refresh deps if their manifests changed, smoke-test, reinstall units, restart the session if needed |
 | `bin/comms-push` | ops | publish local commits: rebase onto `origin/main`, then push — refuses a dirty tree, never forces |
 | `tools/down_pipe.py` | Google | calendar -> vault: per folder mode (`path=year|label|mode` in publish_layers) — interactive = ticks, numbers over blanks, Notes lines, table rows; freeform = any line edit; readonly = never read; log or apply per instance (`down_pipe`), snapshot + journal before writes |
+| `tools/file_note.py` | vault | the one way an agent lays a context note: writes the vault file into a published folder (`note_home` or `--folder`) and runs a publish pass, so the note is keyed and indexed in both places; `--backfill` files every calendar-only note and the publisher adopts each event in place by title (no duplicate) |
 | `tools/note_protocol.py` | Google | publish this stream's copy of the phone rules as a context note and rebuild `Note: Index` |
 | `tools/wakeup.py` | Google | the daily wake-up ritual: roll outstanding items to tomorrow, lay the welcome note on today, archive finished traffic into the band, rescue strays from the anchor date, shelve the meridian spans where `tcm-clock` exists (`deploy/comms-wakeup.timer`, 00:05 and 06:30 local, retried) |
 | `tools/journal_export.py` | Google | one-way export of Note: events and finished threads into an Obsidian vault (`journal_dir` in comms.toml, opt-in): relay plumbing stripped, stable frontmatter ids, locally edited files left alone (`deploy/comms-journal.timer`, every 15 minutes) |
@@ -136,7 +137,7 @@ carries `contract, event_id, status (done|question|progress), text`. Files move 
 
 - Google sync tokens sometimes expire early; the poller re-syncs from the last successful
   poll minus a day, and deduplicates by event id.
-- The description field is capped by Google at roughly 8 KB; long output goes into a
-  `Note:` event and the reply carries its title.
+- The description field is capped by Google at roughly 8 KB; long output goes into a note
+  filed with `tools/file_note.py` (vault first, published from there) and the reply carries its title.
 - Haiku has no auto mode; a gear naming it is refused (the session would drop to manual).
 - One stream per instance. Two streams on one machine means two checkouts.

@@ -342,7 +342,7 @@ def main():
     folders, notes = state["folders"], state["notes"]
     taken = {t for e in events for t in (e.get("location") or "").split() if links.is_key(t)}
     taken |= {v["key"] for v in notes.values() if v.get("key")} | set(folders)
-    counts = {"inserted": 0, "updated": 0, "deleted": 0, "unchanged": 0, "split": 0, "overwrote calendar edit": 0,
+    counts = {"inserted": 0, "updated": 0, "deleted": 0, "unchanged": 0, "split": 0, "adopted": 0, "overwrote calendar edit": 0,
               "folders renamed": 0, "notes moved": 0, "pending deletes": 0}
     now = datetime.now(timezone.utc).isoformat()
     dirs = all_dirs(vault)
@@ -449,6 +449,16 @@ def main():
             text = canonical(raw)
             files[rel] = {"folder": fk, "text": text, "hash": h(text), "inode": inode(p), "stem": p.stem, "parent": p.parent.name,
                           "pattern": any(ch in spec for ch in "*?[")}
+    # ADOPTION (2026-10-01, operator: "nothing exists only on the calendar"): a note an agent or a person laid
+    # straight onto the calendar (any writer but this publisher or the mirror, no vault path) is adopted IN PLACE
+    # when a vault file with the same title appears — its event becomes this note's event (re-dated to the layer,
+    # keyed, re-bodied from the vault), so filing a calendar-only note into a mapped folder never duplicates it.
+    orphans = {}
+    for e in events:
+        pv = (e.get("extendedProperties") or {}).get("private") or {}
+        if (pv.get("comms_kind") == "note" and pv.get("comms_writer") not in (WRITER, "mirror")
+                and not pv.get("mirror_path") and not pv.get("publish_path")):
+            orphans.setdefault(e.get("summary", ""), []).append(e)
     unmatched = {rel: n for rel, n in notes.items() if rel not in files}
     by_hash = {n["hash"]: rel for rel, n in unmatched.items() if n.get("hash")}
     by_inode = {tuple(n["inode"]): rel for rel, n in unmatched.items() if n.get("inode")}
@@ -470,6 +480,19 @@ def main():
             counts["notes moved"] += 1
             print(f"{tag}note    {what}: {old} -> {rel}")
         else:
+            cand = orphans.get(f"Note: {f['stem']}") or []
+            if len(cand) == 1:
+                e = cand[0]
+                had = links.key_of(e.get("description") or "")
+                key = had if had and had not in {v.get("key") for v in notes.values()} else links.mint(taken)
+                taken.add(key)
+                notes[rel] = {"key": key, "event_ids": [e["id"]], "hash": None, "folder": f["folder"], "inode": None, "title": None}
+                mine[e["id"]] = e      # from here on it is this publisher's event; the update below rewrites it in place
+                counts["adopted"] += 1
+                print(f"{tag}adopt   {e.get('summary')} ({e['start'].get('date')}) -> {rel}, key {key}")
+                continue
+            if len(cand) > 1:
+                print(f"{tag}note    {len(cand)} calendar-only events titled 'Note: {f['stem']}' — not adopting, minting a new one")
             notes[rel] = {"key": links.mint(taken), "event_ids": [], "hash": None, "folder": f["folder"], "inode": None, "title": None}
     # identity into the vault: every published note carries its key and parent in frontmatter (stamped once;
     # a note that already has them is left alone; the canonical text strips the block so hashes do not move)
@@ -487,7 +510,7 @@ def main():
     for e in events:
         k = links.key_of(e.get("description") or "")
         if k:
-            name2key.setdefault(re.sub(r"^Note:?\s*", "", e["summary"]).strip(), k)
+            name2key.setdefault(re.sub(r"^Note:\s*", "", e["summary"]).strip(), k)
 
     # ---- 3. publish notes ------------------------------------------------------------------------
     missing_links = set()
