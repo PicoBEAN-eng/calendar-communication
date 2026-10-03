@@ -102,6 +102,9 @@ def basename(target: str) -> str:
 
 
 def up(text: str, name2key: dict, missing: set | None = None) -> str:
+    """Glue each link's key on. IDEMPOTENT (2026-10-03, Frames' report): a link already carrying
+    its glue is left alone, and a run of repeated glue (the old non-idempotent behaviour re-glued
+    the mirror's "Calendar mirror" listing every pass until it hit the cap) collapses to one."""
     def sub(m):
         key = name2key.get(basename(m.group(1)))
         if not key:
@@ -109,7 +112,8 @@ def up(text: str, name2key: dict, missing: set | None = None) -> str:
                 missing.add(basename(m.group(1)))
             return m.group(0)
         return f"{m.group(0)}l{key}"
-    return LINK.sub(sub, text)
+    out = LINK.sub(sub, text)
+    return re.sub(r"(\]\]l[a-z][a-z0-9]{4})(?:l[a-z][a-z0-9]{4})+", r"\1", out)
 
 
 def down(text: str, key2name: dict) -> str:
