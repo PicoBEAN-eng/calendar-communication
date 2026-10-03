@@ -227,7 +227,7 @@ def rescue_strays(svc, cal, cfg, today, dry):
 
 
 WELCOME = "Note: Welcome"
-WELCOME_VERSION = "v6"   # bump when the welcome text changes, and add a row to "Note: Welcome · versions"
+WELCOME_VERSION = "v7"   # bump when the welcome text changes, and add a row to "Note: Welcome · versions"
 
 
 def welcome(svc, cal, cfg, today, tomorrow, n_open, items, dry):
