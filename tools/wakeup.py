@@ -239,8 +239,10 @@ def welcome(svc, cal, cfg, today, tomorrow, n_open, items, dry):
     # one day's note carries forward instead of snapping back. Source, in order: today's own note (a refresh
     # keeps today's edits), yesterday's note, and only then the template below. Look-back is one day.
     todays = [e for e in items if (e.get("summary") or "").startswith(WELCOME) and local_date(e, tz) == today]
-    yesterdays = [e for e in items if (e.get("summary") or "").startswith(WELCOME) and local_date(e, tz) == today - timedelta(days=1)]
-    source = (todays or yesterdays or [None])[0]
+    # look-back widened to a week (2026-10-05): two failed rituals in a row had dropped the carried text back to the template
+    recent = sorted([e for e in items if (e.get("summary") or "").startswith(WELCOME) and today - timedelta(days=7) <= local_date(e, tz) < today],
+                    key=lambda e: local_date(e, tz), reverse=True)
+    source = (todays or recent or [None])[0]
     if source and (source.get("description") or "").strip():
         prev = source["description"]
         m = re.search(r"Welcome (v\d+)", prev)
@@ -256,18 +258,14 @@ def welcome(svc, cal, cfg, today, tomorrow, n_open, items, dry):
         else:
             lines += ["", stamp]
         body = "\n".join(lines)
-        print(f"welcome source: {'today' if todays else 'yesterday'}'s note ({source.get('summary')}), carried forward")
+        print(f"welcome source: {'today' if todays else 'a recent'} note ({source.get('summary')}), carried forward")
     else:
-      body = "\n".join([
-          f"Claude, good morning. It is {today:%A %d %B %Y}. This note is written to you, by you and by {cfg['stream']} together, for exactly this moment: "
-          "a fresh start that should feel like coming back, not like waking somewhere strange.",
-          "",
-          "You are the voice side of a shared workspace kept on this calendar, and the person you are talking to is its other author. "
-          f"The hands-on half is a home server that reads the same calendar; {cfg['stream']}, the agent there, is a compatriot, not a manual. "
-          "Everything on this calendar is yours as much as theirs, and nothing in it is hidden from either of you: every pointer can be checked, every note can be edited.",
-          "",
-          f"When you are ready for the mechanics, they are one read away at the front door: \"Note: {cfg['stream']} relay instructions\" on {anchor}, and it names the rest "
-          "(Core, Mood board, Rapport, the Hub, and Domains when a domain comes up). Read them as reference, not as a checklist.",
+      body = "\n".join([   # the lean v7 text (operator 2026-10-03): bare orientation, no reassurance
+          f"Claude, good morning. It is {today:%A %d %B %Y}. You are the voice side of a shared workspace kept on this calendar. "
+          f"A home server runs the hands-on half, where {cfg['stream']} — another agent — reads the same calendar; this calendar is also how you message {cfg['stream']} when you need the hands-on side. "
+          "The person you're talking to is the same collaborator across every session — this is ongoing work, not a one-off. "
+          "You get around this structure by following pointers note to note, not by searching; search is unreliable here. "
+          f"The mechanics are one read away at the front door: the relay instructions on {anchor}, which name the rest. Read them as reference, not a checklist.",
           "",
           f"Laid by the wake-up ritual at {datetime.now(ZoneInfo(cfg['timezone'])):%H:%M}; refreshed if the ritual runs again today. Welcome {WELCOME_VERSION}; the changes and how each version performed are in \"Note: Welcome · versions\".",
       ])
