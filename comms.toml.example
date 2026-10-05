@@ -35,7 +35,7 @@ effort_order = ["low", "medium", "high", "xhigh", "max"]   # queue order (same-a
 # --- paths (relative to this file) --------------------------------------------------------
 spool_dir = "spool"
 # thread_mirror_dir = "/path/to/vault/~ Communication/Calendar relay/Threads"   # optional: a vault copy of every thread transcript
-# timeline_dir = "Calendar mirror/Timeline"   # tools/timeline_mirror.py (runs after the mirror pass): every calendar-native event not owned by the mirror or the publisher lands in the vault under <mirror_dir>/<timeline_dir>/<year>/<real day>/; band dates decoded by the offsets; one-way, deletions follow. Default shown.
+# timeline_dir = "Calendar mirror/Timeline"   # relative to mirror_dir, or an absolute path. tools/timeline_mirror.py (runs after the mirror pass): every calendar-native event not owned by the mirror or the publisher lands in the vault under <mirror_dir>/<timeline_dir>/<year>/<real day>/; band dates decoded by the offsets; one-way, deletions follow. Default shown.
 # mirror_exclude = ["Calendar mirror/Timeline", "Calendar mirror/Traffic"]   # vault folders the two-way scan never reads (one-way territories)
 state_file = "state/poller_state.json"
 token_file = "state/token.json"

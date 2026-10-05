@@ -99,9 +99,12 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     cfg = cp.load_config(Path(a.config))
-    if not cfg.get("mirror_dir"):
-        print("timeline mirror: mirror_dir unset; nothing done"); return
-    root = Path(cfg["mirror_dir"]).expanduser() / (cfg.get("timeline_dir") or TIMELINE_DIR)
+    if not cfg.get("mirror_dir") and not Path(cfg.get("timeline_dir") or "").is_absolute():
+        print("timeline mirror: neither mirror_dir nor an absolute timeline_dir is set; nothing done"); return
+    # timeline_dir: relative to mirror_dir, or an absolute path (Woolly 2026-10-05: its natural home is beside the
+    # thread transcripts in ~ Communication, not under the mirror territory)
+    td = Path(cfg.get("timeline_dir") or TIMELINE_DIR).expanduser()
+    root = td if td.is_absolute() else Path(cfg["mirror_dir"]).expanduser() / td
     tz = ZoneInfo(cfg.get("timezone", "UTC"))
     today = datetime.now(tz).date()
     lo, hi = today - timedelta(days=a.since), today + timedelta(days=3)
